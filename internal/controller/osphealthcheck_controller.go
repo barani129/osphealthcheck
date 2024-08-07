@@ -236,8 +236,8 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			nonActiveVM = append(nonActiveVM, vm.Name)
 		}
 	}
-
 	if status.LastRunTime == nil {
+		var errSlice []string
 		log.Log.Info(fmt.Sprintf("starting openstack healthchecks in cluster %s", config.Host))
 		log.Log.Info("Modifying ssh config file permission to avoid openstack command execution failure after openstackclient pod restarts")
 		_, err := util.ExecuteCommand("chmod 644 /home/cloud-admin/.ssh/config", clientset, config)
@@ -262,6 +262,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 					util.NotifyExternalSystem(data, "firing", "found a non running vm", vm, spec.ExternalURL, string(username), string(password), fmt.Sprintf("/home/golanguser/%s-%s-ext.txt", vm, "non-active"), status)
 				}
 			}
+			errSlice = append(errSlice, "non running controller vms")
 		}
 		log.Log.Info("Check pcs status")
 		pcsErr, err := util.CheckPcsStatus(activeVM[0], clientset, config)
@@ -279,6 +280,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 					util.NotifyExternalSystem(data, "firing", err, activeVM[0], spec.ExternalURL, string(username), string(password), fmt.Sprintf("/home/golanguser/%s-%s-ext.txt", err, "pcs"), status)
 				}
 			}
+			errSlice = append(errSlice, "pcs errors")
 		}
 		log.Log.Info("Check pcs stonith")
 		stonith, err := util.CheckPcsStonith(activeVM[0], clientset, config)
@@ -293,6 +295,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				util.NotifyExternalSystem(data, "firing", "pcs stonith is disabled", activeVM[0], spec.ExternalURL, string(username), string(password), fmt.Sprintf("/home/golanguser/%s-%s-ext.txt", "checkstonith", "pcs"), status)
 			}
 			status.FailedChecks = append(status.FailedChecks, "stonith is disabled, please ignore if it is intended")
+			errSlice = append(errSlice, "stonith is disabled")
 		}
 		log.Log.Info("Check Openstack Compute Service")
 		hostsErr, err := util.CheckComputeService(clientset, config)
@@ -309,6 +312,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				}
 				status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("openstack compute service is down in node %s", host))
 			}
+			errSlice = append(errSlice, "hosts with nova down")
 		}
 		log.Log.Info("Check Openstack network agents")
 		netErr, err := util.CheckNetworkAgents(clientset, config)
@@ -325,17 +329,27 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				}
 				status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("openstack network agent is down in node %s", host))
 			}
+			errSlice = append(errSlice, "hosts with network down")
+		}
+		if len(errSlice) < 1 {
+			*status.Healthy = true
+			now := v1.Now()
+			status.LastSuccessfulRunTime = &now
+		} else {
+			*status.Healthy = false
 		}
 	} else {
 		pastTime := time.Now().Add(-1 * defaultHealthCheckInterval)
 		timeDiff := status.LastRunTime.Time.Before(pastTime)
 		if timeDiff {
+			var errSlice []string
 			log.Log.Info(fmt.Sprintf("starting openstack healthchecks in cluster %s", config.Host))
 			log.Log.Info("Modifying ssh config file permission to avoid openstack command execution failure after openstackclient pod restarts")
 			_, err := util.ExecuteCommand("chmod 644 /home/cloud-admin/.ssh/config", clientset, config)
 			if err != nil {
 				if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
 					util.SendEmailAlert("openstackclient", fmt.Sprintf("/home/golanguser/%s-%s.txt", "modifyfileperm", "openstackclient"), spec, "modifyfileperm")
+
 				}
 				if spec.NotifyExtenal != nil && !*spec.NotifyExtenal {
 					util.SubNotifyExternalSystem(data, "firing", "modifyfileperm", "openstackclient", spec.ExternalURL, string(username), string(password), fmt.Sprintf("/home/golanguser/%s-%s-ext.txt", "modifyfileperm", "openstackclient"), status)
@@ -353,6 +367,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 						util.SubNotifyExternalSystem(data, "firing", "found a non running vm", vm, spec.ExternalURL, string(username), string(password), fmt.Sprintf("/home/golanguser/%s-%s-ext.txt", vm, "non-active"), status)
 					}
 				}
+				errSlice = append(errSlice, "non running controller vms")
 			}
 			log.Log.Info("Check pcs status")
 			pcsErr, err := util.CheckPcsStatus(activeVM[0], clientset, config)
@@ -370,6 +385,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 						util.SubNotifyExternalSystem(data, "firing", err, activeVM[0], spec.ExternalURL, string(username), string(password), fmt.Sprintf("/home/golanguser/%s-%s-ext.txt", err, "pcs"), status)
 					}
 				}
+				errSlice = append(errSlice, "pcs errors")
 			}
 			log.Log.Info("Check pcs stonith")
 			stonith, err := util.CheckPcsStonith(activeVM[0], clientset, config)
@@ -384,6 +400,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 					util.SubNotifyExternalSystem(data, "firing", "pcs stonith is disabled", activeVM[0], spec.ExternalURL, string(username), string(password), fmt.Sprintf("/home/golanguser/%s-%s-ext.txt", "checkstonith", "pcs"), status)
 				}
 				status.FailedChecks = append(status.FailedChecks, "stonith is disabled, please ignore if it is intended")
+				errSlice = append(errSlice, "stonith is disabled")
 			}
 			log.Log.Info("Check Openstack Compute Service")
 			hostsErr, err := util.CheckComputeService(clientset, config)
@@ -400,6 +417,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 					}
 					status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("openstack compute service is down in node %s", host))
 				}
+				errSlice = append(errSlice, "hosts with nova down")
 			}
 			log.Log.Info("Check Openstack network agents")
 			netErr, err := util.CheckNetworkAgents(clientset, config)
@@ -416,6 +434,14 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 					}
 					status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("openstack network agent is down in node %s", host))
 				}
+				errSlice = append(errSlice, "hosts with network down")
+			}
+			if len(errSlice) < 1 {
+				*status.Healthy = true
+				now := v1.Now()
+				status.LastSuccessfulRunTime = &now
+			} else {
+				*status.Healthy = false
 			}
 		}
 	}

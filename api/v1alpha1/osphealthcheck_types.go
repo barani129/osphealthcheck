@@ -89,7 +89,7 @@ type OsphealthcheckStatus struct {
 
 	// Indicates if openstack cluster is completely error free
 	// +optional
-	Healthy bool `json:"healthy,omitempty"`
+	Healthy *bool `json:"healthy,omitempty"`
 
 	// Indicates the timestamp when external alerting system is notified
 	// +optional
