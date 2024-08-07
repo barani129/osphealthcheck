@@ -14,7 +14,30 @@ spec:
     singular: osphealthcheck
   scope: Cluster
   versions:
-  - name: v1alpha1
+  - additionalPrinterColumns:
+    - description: object creation timestamp(in cluster's timezone)
+      jsonPath: .metadata.creationTimestamp
+      name: CreatedAt
+      type: string
+    - description: if set to true, there is no container with non-zero terminate state
+      jsonPath: .status.conditions[].status
+      name: Ready
+      type: string
+    - description: last healthcheck run timestamp(in cluster's timezone)
+      jsonPath: .status.lastRunTime
+      name: LastRunTime
+      type: string
+    - description: 'last successful run timestamp(in cluster''s timezone) where cluster
+        is error free '
+      jsonPath: .status.lastSuccessfulRunTime
+      name: LastSuccessfulRunTime
+      type: string
+    - description: last successful run (where there is no failed containers) timestamp(in
+        cluster's timezone)
+      jsonPath: .status.healthy
+      name: Healthy
+      type: string
+    name: v1alpha1
     schema:
       openAPIV3Schema:
         description: Osphealthcheck is the Schema for the osphealthchecks API

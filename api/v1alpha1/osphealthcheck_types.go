@@ -29,11 +29,6 @@ const (
 )
 
 // OsphealthcheckSpec defines the desired state of Osphealthcheck
-// +kubebuilder:printcolumn:name="CreatedAt",type="string",JSONPath=".metadata.creationTimestamp",description="object creation timestamp(in cluster's timezone)"
-// +kubebuilder:printcolumn:name="Ready",type="string",JSONPath=".status.conditions[].status",description="if set to true, there is no container with non-zero terminate state"
-// +kubebuilder:printcolumn:name="LastRunTime",type="string",JSONPath=".status.lastRunTime",description="last healthcheck run timestamp(in cluster's timezone)"
-// +kubebuilder:printcolumn:name="LastSuccessfulRunTime",type="string",JSONPath=".status.lastSuccessfulRunTime",description="last successful run timestamp(in cluster's timezone) where cluster is error free "
-// +kubebuilder:printcolumn:name="Healthy",type="string",JSONPath=".status.healthy",description="last successful run (where there is no failed containers) timestamp(in cluster's timezone)"
 type OsphealthcheckSpec struct {
 	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
@@ -105,6 +100,11 @@ type OsphealthcheckStatus struct {
 //+kubebuilder:resource:scope=Cluster
 
 // Osphealthcheck is the Schema for the osphealthchecks API
+// +kubebuilder:printcolumn:name="CreatedAt",type="string",JSONPath=".metadata.creationTimestamp",description="object creation timestamp(in cluster's timezone)"
+// +kubebuilder:printcolumn:name="Ready",type="string",JSONPath=".status.conditions[].status",description="if set to true, there is no container with non-zero terminate state"
+// +kubebuilder:printcolumn:name="LastRunTime",type="string",JSONPath=".status.lastRunTime",description="last healthcheck run timestamp(in cluster's timezone)"
+// +kubebuilder:printcolumn:name="LastSuccessfulRunTime",type="string",JSONPath=".status.lastSuccessfulRunTime",description="last successful run timestamp(in cluster's timezone) where cluster is error free "
+// +kubebuilder:printcolumn:name="Healthy",type="string",JSONPath=".status.healthy",description="last successful run (where there is no failed containers) timestamp(in cluster's timezone)"
 type Osphealthcheck struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
