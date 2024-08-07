@@ -151,6 +151,10 @@ func (in *OsphealthcheckStatus) DeepCopyInto(out *OsphealthcheckStatus) {
 		in, out := &in.LastRunTime, &out.LastRunTime
 		*out = (*in).DeepCopy()
 	}
+	if in.LastSuccessfulRunTime != nil {
+		in, out := &in.LastSuccessfulRunTime, &out.LastSuccessfulRunTime
+		*out = (*in).DeepCopy()
+	}
 	if in.ExternalNotifiedTime != nil {
 		in, out := &in.ExternalNotifiedTime, &out.ExternalNotifiedTime
 		*out = (*in).DeepCopy()

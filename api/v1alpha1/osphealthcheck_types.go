@@ -29,6 +29,11 @@ const (
 )
 
 // OsphealthcheckSpec defines the desired state of Osphealthcheck
+// +kubebuilder:printcolumn:name="CreatedAt",type="string",JSONPath=".metadata.creationTimestamp",description="object creation timestamp(in cluster's timezone)"
+// +kubebuilder:printcolumn:name="Ready",type="string",JSONPath=".status.conditions[].status",description="if set to true, there is no container with non-zero terminate state"
+// +kubebuilder:printcolumn:name="LastRunTime",type="string",JSONPath=".status.lastRunTime",description="last healthcheck run timestamp(in cluster's timezone)"
+// +kubebuilder:printcolumn:name="LastSuccessfulRunTime",type="string",JSONPath=".status.lastSuccessfulRunTime",description="last successful run timestamp(in cluster's timezone) where cluster is error free "
+// +kubebuilder:printcolumn:name="Healthy",type="string",JSONPath=".status.healthy",description="last successful run (where there is no failed containers) timestamp(in cluster's timezone)"
 type OsphealthcheckSpec struct {
 	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
@@ -70,13 +75,21 @@ type OsphealthcheckStatus struct {
 	// +optional
 	Conditions []OsphealthcheckCondition `json:"conditions,omitempty"`
 
-	// last successful timestamp of retrieved cluster status
+	// timestamp of last osphealthcheck run, please refer lastSuccessfulRunTime for successful run time
 	// +optional
 	LastRunTime *metav1.Time `json:"lastRunTime,omitempty"`
+
+	// last successful timestamp of osphealthchecks, indicates if the openstack cluster is completely healthy
+	// +optional
+	LastSuccessfulRunTime *metav1.Time `json:"lastSuccessfulRunTime,omitempty"`
 
 	// Indicates if external alerting system is notified
 	// +optional
 	ExternalNotified bool `json:"externalNotified,omitempty"`
+
+	// Indicates if openstack cluster is completely error free
+	// +optional
+	Healthy bool `json:"healthy,omitempty"`
 
 	// Indicates the timestamp when external alerting system is notified
 	// +optional
