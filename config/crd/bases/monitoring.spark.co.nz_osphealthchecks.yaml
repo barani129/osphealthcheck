@@ -1,0 +1,142 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.14.0
+  name: osphealthchecks.monitoring.spark.co.nz
+spec:
+  group: monitoring.spark.co.nz
+  names:
+    kind: Osphealthcheck
+    listKind: OsphealthcheckList
+    plural: osphealthchecks
+    singular: osphealthcheck
+  scope: Cluster
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: Osphealthcheck is the Schema for the osphealthchecks API
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: OsphealthcheckSpec defines the desired state of Osphealthcheck
+            properties:
+              checkInterval:
+                description: the frequency of checks to be done, if not set, defaults
+                  to 2 minutes
+                format: int64
+                type: integer
+              email:
+                description: Target user's email for container status notification
+                type: string
+              externalData:
+                description: Data to be sent to the external system in the form of
+                  config map
+                type: string
+              externalSecret:
+                description: Secret which has the username and password to post the
+                  alert notification to the external system
+                type: string
+              externalURL:
+                description: URL of the external alert system
+                type: string
+              notifyExternal:
+                description: To notify the external alerting system, boolean (true,
+                  false). Set true to notify the external system.
+                type: boolean
+              relayHost:
+                description: SMTP Relay host for sending the email
+                type: string
+              suspend:
+                description: Set suspend to true to disable monitoring the custom
+                  resource
+                type: boolean
+              suspendEmailAlert:
+                description: Suspends email alerts if set to true, target email (.spec.email)
+                  will not be notified
+                type: boolean
+            required:
+            - suspend
+            type: object
+          status:
+            description: OsphealthcheckStatus defines the observed state of Osphealthcheck
+            properties:
+              conditions:
+                description: |-
+                  INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
+                  Important: Run "make" to regenerate code after modifying this file
+                  list of status conditions to indicate the status of managed cluster
+                  known conditions are 'Ready'.
+                items:
+                  properties:
+                    lastTransitionTime:
+                      description: LastTransitionTime is the timestamp of the last
+                        update to the status
+                      format: date-time
+                      type: string
+                    message:
+                      description: Message is the human readable explanation for object's
+                        condition
+                      type: string
+                    reason:
+                      description: Reason is the machine readable explanation for
+                        object's condition
+                      type: string
+                    status:
+                      description: Status of the condition, one of ('True', 'False',
+                        'Unknown')
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: Type of the condition, known values are 'Ready'.
+                      type: string
+                  required:
+                  - message
+                  - status
+                  - type
+                  type: object
+                type: array
+              externalNotified:
+                description: Indicates if external alerting system is notified
+                type: boolean
+              externalNotifiedTime:
+                description: Indicates the timestamp when external alerting system
+                  is notified
+                format: date-time
+                type: string
+              failedChecks:
+                description: affected targets
+                items:
+                  type: string
+                type: array
+              lastRunTime:
+                description: last successful timestamp of retrieved cluster status
+                format: date-time
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

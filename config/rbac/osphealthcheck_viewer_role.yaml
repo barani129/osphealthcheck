@@ -1,0 +1,27 @@
+# permissions for end users to view osphealthchecks.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/name: clusterrole
+    app.kubernetes.io/instance: osphealthcheck-viewer-role
+    app.kubernetes.io/component: rbac
+    app.kubernetes.io/created-by: osphealthcheck
+    app.kubernetes.io/part-of: osphealthcheck
+    app.kubernetes.io/managed-by: kustomize
+  name: osphealthcheck-viewer-role
+rules:
+- apiGroups:
+  - monitoring.spark.co.nz
+  resources:
+  - osphealthchecks
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - monitoring.spark.co.nz
+  resources:
+  - osphealthchecks/status
+  verbs:
+  - get

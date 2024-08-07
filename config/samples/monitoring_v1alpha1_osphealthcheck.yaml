@@ -1,0 +1,9 @@
+apiVersion: monitoring.spark.co.nz/v1alpha1
+kind: Osphealthcheck
+metadata:
+  labels:
+    app.kubernetes.io/name: osphealthcheck
+    app.kubernetes.io/managed-by: kustomize
+  name: osphealthcheck-sample
+spec:
+  # TODO(user): Add fields here
