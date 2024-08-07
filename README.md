@@ -1,8 +1,8 @@
 # osphealthcheck
-// TODO(user): Add simple overview of use/purpose
+Openstack healthchecks as a custom resource for Openshift clusters running Openstack control plane as VMs
 
 ## Description
-// TODO(user): An in-depth paragraph about your project and overview of use
+Openstack healthchecks are running as a custom resource in k8s/Openshift clusters where Openstack control plane VMs are running as kubevirt VMs.
 
 ## Getting Started
 
@@ -10,7 +10,9 @@
 - go version v1.21.0+
 - docker version 17.03+.
 - kubectl version v1.11.3+.
-- Access to a Kubernetes v1.11.3+ cluster.
+- Access to a Openshift v4.12+ cluster.
+- Openshift virtualization is installed.
+- Kubevirt components/CRDs are installed.
 
 ### To Deploy on the cluster
 **Build and push your image to the location specified by `IMG`:**
@@ -88,13 +90,6 @@ Users can just run kubectl apply -f <URL for YAML BUNDLE> to install the project
 ```sh
 kubectl apply -f https://raw.githubusercontent.com/<org>/osphealthcheck/<tag or branch>/dist/install.yaml
 ```
-
-## Contributing
-// TODO(user): Add detailed information on how you would like others to contribute to this project
-
-**NOTE:** Run `make help` for more information on all potential `make` targets
-
-More information can be found via the [Kubebuilder Documentation](https://book.kubebuilder.io/introduction.html)
 
 ## License
 
