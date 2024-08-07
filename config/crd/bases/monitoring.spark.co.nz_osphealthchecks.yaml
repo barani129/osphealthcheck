@@ -130,8 +130,17 @@ spec:
                 items:
                   type: string
                 type: array
+              healthy:
+                description: Indicates if openstack cluster is completely error free
+                type: boolean
               lastRunTime:
-                description: last successful timestamp of retrieved cluster status
+                description: timestamp of last osphealthcheck run, please refer lastSuccessfulRunTime
+                  for successful run time
+                format: date-time
+                type: string
+              lastSuccessfulRunTime:
+                description: last successful timestamp of osphealthchecks, indicates
+                  if the openstack cluster is completely healthy
                 format: date-time
                 type: string
             type: object
