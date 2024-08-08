@@ -46,10 +46,6 @@ var (
 	errGetAuthConfigMap = errors.New("failed to get ConfigMap containing the data to be sent to the external alert system")
 )
 
-const (
-	defaultHealthCheckInterval = 1 * time.Hour
-)
-
 // OsphealthcheckReconciler reconciles a Osphealthcheck object
 type OsphealthcheckReconciler struct {
 	client.Client
@@ -236,6 +232,13 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			nonActiveVM = append(nonActiveVM, vm.Name)
 		}
 	}
+	var defaultHealthCheckInterval time.Duration
+	if spec.CheckInterval != nil {
+		defaultHealthCheckInterval = time.Minute * time.Duration(*spec.CheckInterval)
+	} else {
+		defaultHealthCheckInterval = time.Minute * 30
+	}
+
 	if status.LastRunTime == nil {
 		var errSlice []string
 		log.Log.Info(fmt.Sprintf("starting openstack healthchecks in cluster %s", config.Host))
@@ -447,7 +450,6 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	}
 	now := v1.Now()
 	status.LastRunTime = &now
-	status.ExternalNotified = false
 	report(monitoringv1alpha1.ConditionTrue, "All healthchecks are completed, please check the resource status for failed checks.", nil)
 	return ctrl.Result{RequeueAfter: defaultHealthCheckInterval}, nil
 }
