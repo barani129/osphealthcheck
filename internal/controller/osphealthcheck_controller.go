@@ -335,11 +335,11 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			errSlice = append(errSlice, "hosts with network down")
 		}
 		if len(errSlice) < 1 {
-			*status.Healthy = true
+			status.Healthy = true
 			now := v1.Now()
 			status.LastSuccessfulRunTime = &now
 		} else {
-			*status.Healthy = false
+			status.Healthy = false
 		}
 	} else {
 		pastTime := time.Now().Add(-1 * defaultHealthCheckInterval)
@@ -440,11 +440,11 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				errSlice = append(errSlice, "hosts with network down")
 			}
 			if len(errSlice) < 1 {
-				*status.Healthy = true
+				status.Healthy = true
 				now := v1.Now()
 				status.LastSuccessfulRunTime = &now
 			} else {
-				*status.Healthy = false
+				status.Healthy = false
 			}
 		}
 	}

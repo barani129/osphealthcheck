@@ -1,7 +1,6 @@
 package util
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"crypto/rand"
@@ -75,11 +74,15 @@ func SetReadyCondition(status *v1alpha1.OsphealthcheckStatus, conditionStatus v1
 	}
 }
 
-func ExecuteCommand(commandToRun string, clientset *kubernetes.Clientset, config *rest.Config) (*bufio.Scanner, error) {
-	var bufferData *bytes.Buffer
-	var errorBuffer *bytes.Buffer
-	var dataScanner *bufio.Scanner
-	var errorScanner *bufio.Scanner
+func ExecuteCommand(commandToRun string, clientset *kubernetes.Clientset, config *rest.Config) ([]byte, error) {
+	outFile, err := os.OpenFile("/home/golanguser/commandoutput.txt", os.O_CREATE|os.O_RDWR, 0644)
+	if err != nil {
+		return nil, err
+	}
+	outErrFile, err := os.OpenFile("/home/golanguser/commanderr.txt", os.O_CREATE|os.O_RDWR, 0644)
+	if err != nil {
+		return nil, err
+	}
 	req := clientset.CoreV1().RESTClient().Post().Resource("pods").Name("openstackclient").Namespace("openstack").SubResource("exec").VersionedParams(
 		&corev1.PodExecOptions{
 			Container: "openstackclient",
@@ -96,20 +99,24 @@ func ExecuteCommand(commandToRun string, clientset *kubernetes.Clientset, config
 	}
 	err = ex.StreamWithContext(context.Background(), remotecommand.StreamOptions{
 		Stdin:  os.Stdin,
-		Stdout: bufferData,
-		Stderr: errorBuffer,
+		Stdout: outFile,
+		Stderr: outErrFile,
 		Tty:    false,
 	})
 	if err != nil {
 		return nil, err
 	}
-	dataScanner = bufio.NewScanner(bufferData)
-	errorScanner = bufio.NewScanner(errorBuffer)
-	errData := errorScanner.Bytes()
+	errData, err := os.ReadFile(outErrFile.Name())
 	if errData != nil {
-		return nil, fmt.Errorf("command %s execution failed with errors", commandToRun)
+		return nil, err
 	}
-	return dataScanner, nil
+	data, err := os.ReadFile(outFile.Name())
+	if errData != nil {
+		return nil, err
+	}
+	os.Remove(outErrFile.Name())
+	os.Remove(outFile.Name())
+	return data, nil
 }
 
 func SendEmailAlert(nodeName string, filename string, spec *v1alpha1.OsphealthcheckSpec, commandToRun string) {
@@ -282,46 +289,39 @@ func ReadFile(filename string) (string, error) {
 
 func CheckPcsStatus(activeVM string, clientset *kubernetes.Clientset, config *rest.Config) ([]string, error) {
 	var errSlice []string
-	pcsData, err := ExecuteCommand(fmt.Sprintf("ssh -q %s.ctlplane sudo pcs status", activeVM), clientset, config)
+	data, err := ExecuteCommand(fmt.Sprintf("ssh -q %s.ctlplane sudo pcs status", activeVM), clientset, config)
 	if err != nil {
 		return nil, err
 	}
-	for pcsData.Scan() {
-		data := pcsData.Bytes()
-		if strings.Contains(string(data), "Stopped") {
-			errSlice = append(errSlice, "found-stopped-service-in-pcs-status")
-		}
-		if strings.Contains(string(data), "Failed Fencing Actions") {
-			errSlice = append(errSlice, "found-failed-fencing-actions-in-pcs-status")
-		}
-		if strings.Contains(string(data), "failed") {
-			errSlice = append(errSlice, "found-other-failed-events-in-pcs-status")
-		}
+	if strings.Contains(string(data), "Stopped") {
+		errSlice = append(errSlice, "found-stopped-service-in-pcs-status")
+	}
+	if strings.Contains(string(data), "Failed Fencing Actions") {
+		errSlice = append(errSlice, "found-failed-fencing-actions-in-pcs-status")
+	}
+	if strings.Contains(string(data), "failed") {
+		errSlice = append(errSlice, "found-other-failed-events-in-pcs-status")
 	}
 	return errSlice, nil
 }
 
 func CheckPcsStonith(activeVM string, clientset *kubernetes.Clientset, config *rest.Config) (bool, error) {
-	pcsData, err := ExecuteCommand(fmt.Sprintf("ssh -q %s.ctlplane sudo pcs property show pcs-enabled", activeVM), clientset, config)
+	data, err := ExecuteCommand(fmt.Sprintf("ssh -q %s.ctlplane sudo pcs property show pcs-enabled", activeVM), clientset, config)
 	if err != nil {
 		return false, err
 	}
-	for pcsData.Scan() {
-		data := pcsData.Bytes()
-		if strings.Contains(string(data), "false") {
-			return true, nil
-		}
+	if strings.Contains(string(data), "false") {
+		return true, nil
 	}
 	return false, nil
 }
 
 func CheckComputeService(clientset *kubernetes.Clientset, config *rest.Config) ([]string, error) {
 	var errSlice []string
-	pcsData, err := ExecuteCommand("openstack compute service list -c Host -c State -f value", clientset, config)
+	data, err := ExecuteCommand("openstack compute service list -c Host -c State -f value", clientset, config)
 	if err != nil {
 		return nil, err
 	}
-	data := pcsData.Bytes()
 	sliceData := strings.Split(string(data), "/n")
 	for _, dat := range sliceData {
 		if strings.Contains(dat, "down") {
@@ -334,11 +334,10 @@ func CheckComputeService(clientset *kubernetes.Clientset, config *rest.Config) (
 
 func CheckNetworkAgents(clientset *kubernetes.Clientset, config *rest.Config) ([]string, error) {
 	var errSlice []string
-	pcsData, err := ExecuteCommand("openstack network agent list -c Host -c State -f value", clientset, config)
+	data, err := ExecuteCommand("openstack network agent list -c Host -c State -f value", clientset, config)
 	if err != nil {
 		return nil, err
 	}
-	data := pcsData.Bytes()
 	sliceData := strings.Split(string(data), "/n")
 	for _, dat := range sliceData {
 		if strings.Contains(dat, "False") {

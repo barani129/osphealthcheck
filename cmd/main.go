@@ -140,6 +140,7 @@ func main() {
 	}
 
 	if err = (&controller.OsphealthcheckReconciler{
+		Kind:                     "Osphealthcheck",
 		Client:                   mgr.GetClient(),
 		Scheme:                   mgr.GetScheme(),
 		ClusterResourceNamespace: clusterResourceNamespace,
