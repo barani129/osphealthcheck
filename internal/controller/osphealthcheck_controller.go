@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"os"
 	"slices"
 	"strings"
@@ -304,7 +305,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			return ctrl.Result{}, fmt.Errorf("unable to modify file permission of /home/cloud-admin/.ssh/config in openstackclient pod, exiting as subsequent healtchecks might fail")
 		}
 		log.Log.Info("Check pcs status")
-		pcsReq := returnCommand(r, fmt.Sprintf("ssh -q %s.ctlplane sudo pcs status", activeVM[0]))
+		pcsReq := returnCommand(r, fmt.Sprintf("ssh -q %s.ctlplane sudo pcs status", generateRandom(activeVM)))
 		pcsErr, err := util.CheckPcsStatus(pcsReq, clientset, r.RESTConfig, "pcsfile")
 		if err != nil {
 			log.Log.Error(err, "failed to execute pcs status command ")
@@ -316,14 +317,14 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			status.FailedChecks = append(status.FailedChecks, "pcs errors")
 		}
 		log.Log.Info("Check pcs stonith status")
-		stonithReq := returnCommand(r, fmt.Sprintf("ssh -q %s.ctlplane sudo pcs property show stonith-enabled", activeVM[0]))
+		stonithReq := returnCommand(r, fmt.Sprintf("ssh -q %s.ctlplane sudo pcs property show stonith-enabled", generateRandom(activeVM)))
 		stonith, err := util.CheckPcsStonith(stonithReq, clientset, r.RESTConfig, "stonith")
 		if err != nil {
 			log.Log.Error(err, "failed to execute pcs stonith check command")
 		}
 		if stonith {
 			if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-				util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", "checkstonith", "pcs"), spec, "pcs stonith is disalbed")
+				util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", "checkstonith", "pcs"), spec, "pcs stonith is disabled")
 			}
 			status.FailedChecks = append(status.FailedChecks, "stonith is disabled, please ignore if it is intended")
 		}
@@ -341,7 +342,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 						if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
 							util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", external, "external-ip"), spec, fmt.Sprintf("external IP %s is unreachable from openstackclient pod", external))
 						}
-						status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("external IP %s is unreachable from %s.ctlplane", external, activeVM[0]))
+						status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("external IP %s is unreachable from %s.ctlplane", external, generateRandom(activeVM)))
 					}
 				}()
 			}
@@ -360,7 +361,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 						if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
 							util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", vm, sftpIP[0]), spec, fmt.Sprintf("backup server IP %s is unreachable from control plane VM %s", sftpIP[0], vm))
 						}
-						status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("backup server %s is unreachable from control plane VM %s", sftpIP[0], activeVM[0]))
+						status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("backup server %s is unreachable from control plane VM %s", sftpIP[0], generateRandom(activeVM)))
 					}
 				}()
 			}
@@ -420,7 +421,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			go func() {
 				defer wg.Done()
 				for _, co := range conn {
-					coReq := returnCommand(r, fmt.Sprintf("ssh -q %s.ctlplane sudo ping -c 3 %s.%s", activeVM[0], host, co))
+					coReq := returnCommand(r, fmt.Sprintf("ssh -q %s.ctlplane sudo ping -c 3 %s.%s", generateRandom(activeVM), host, co))
 					err := util.ModifyExecuteCommand(coReq, r.RESTConfig, util.HandleCNString(host))
 					if err != nil {
 						if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
@@ -700,7 +701,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", "modifyfileperm", "openstackclient"))
 			}
 			log.Log.Info("Check pcs status")
-			pcsReq := returnCommand(r, fmt.Sprintf("ssh -q %s.ctlplane sudo pcs status", activeVM[0]))
+			pcsReq := returnCommand(r, fmt.Sprintf("ssh -q %s.ctlplane sudo pcs status", generateRandom(activeVM)))
 			pcsErr, err := util.CheckPcsStatus(pcsReq, clientset, r.RESTConfig, "pcsfile")
 			if err != nil {
 				log.Log.Error(err, "failed to execute pcs status command ")
@@ -721,14 +722,14 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", "error", "pcs"))
 			}
 			log.Log.Info("Check pcs stonith status")
-			stonithReq := returnCommand(r, fmt.Sprintf("ssh -q %s.ctlplane sudo pcs property show stonith-enabled", activeVM[0]))
+			stonithReq := returnCommand(r, fmt.Sprintf("ssh -q %s.ctlplane sudo pcs property show stonith-enabled", generateRandom(activeVM)))
 			stonith, err := util.CheckPcsStonith(stonithReq, clientset, r.RESTConfig, "stonith")
 			if err != nil {
 				log.Log.Error(err, "failed to execute pcs stonith check command")
 			}
 			if stonith {
 				if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-					util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", "checkstonith", "pcs"), spec, "pcs stonith is disalbed")
+					util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", "checkstonith", "pcs"), spec, "pcs stonith is disabled")
 				}
 				status.FailedChecks = append(status.FailedChecks, "stonith is disabled, please ignore if it is intended")
 			} else {
@@ -755,7 +756,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 							if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
 								util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", external, "external-ip"), spec, fmt.Sprintf("external IP %s is unreachable", external))
 							}
-							status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("external IP %s is unreachable from %s.ctlplane", external, activeVM[0]))
+							status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("external IP %s is unreachable from %s.ctlplane", external, generateRandom(activeVM)))
 						} else {
 							if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
 								util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", external, "external-ip"), spec, fmt.Sprintf("external IP %s is now reachable", external))
@@ -783,13 +784,13 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 							if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
 								util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", vm, sftpIP[0]), spec, fmt.Sprintf("backup server IP %s is unreachable from control plane VM %s", sftpIP[0], vm))
 							}
-							status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("backup server %s is unreachable from control plane VM %s", sftpIP[0], activeVM[0]))
+							status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("backup server %s is unreachable from control plane VM %s", sftpIP[0], generateRandom(activeVM)))
 						} else {
 							if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
 								util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", vm, sftpIP[0]), spec, fmt.Sprintf("backup server IP %s is now reachable from control plane VM %s", sftpIP[0], vm))
 							}
-							if slices.Contains(status.FailedChecks, fmt.Sprintf("backup server %s is unreachable from control plane VM %s", sftpIP[0], activeVM[0])) {
-								idx := slices.Index(status.FailedChecks, fmt.Sprintf("backup server %s is unreachable from control plane VM %s", sftpIP[0], activeVM[0]))
+							if slices.Contains(status.FailedChecks, fmt.Sprintf("backup server %s is unreachable from control plane VM %s", sftpIP[0], generateRandom(activeVM))) {
+								idx := slices.Index(status.FailedChecks, fmt.Sprintf("backup server %s is unreachable from control plane VM %s", sftpIP[0], generateRandom(activeVM)))
 								deleteElementSlice(status.FailedChecks, idx)
 							}
 							os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", vm, sftpIP[0]))
@@ -888,7 +889,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				go func() {
 					defer wg.Done()
 					for _, co := range conn {
-						coReq := returnCommand(r, fmt.Sprintf("ssh -q %s.ctlplane sudo ping -c 3 %s.%s", activeVM[0], host, co))
+						coReq := returnCommand(r, fmt.Sprintf("ssh -q %s.ctlplane sudo ping -c 3 %s.%s", generateRandom(activeVM), host, co))
 						err := util.ModifyExecuteCommand(coReq, r.RESTConfig, util.HandleCNString(host))
 						if err != nil {
 							if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
@@ -1243,4 +1244,12 @@ func returnCommand(r *OsphealthcheckReconciler, commandToRun string) *rest.Reque
 			Stderr:    true,
 		}, runtime.NewParameterCodec(r.Scheme))
 	return execReq
+}
+
+func generateRandom(sli []string) string {
+	if len(sli) < 1 {
+		return ""
+	}
+	idx := rand.Intn(len(sli))
+	return sli[idx]
 }
