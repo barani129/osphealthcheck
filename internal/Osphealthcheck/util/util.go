@@ -12,16 +12,16 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/barani129/osphealthcheck/api/v1alpha1"
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/remotecommand"
+	kubev1 "kubevirt.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -74,25 +74,16 @@ func SetReadyCondition(status *v1alpha1.OsphealthcheckStatus, conditionStatus v1
 	}
 }
 
-func ExecuteCommand(commandToRun string, clientset *kubernetes.Clientset, config *rest.Config) ([]byte, error) {
-	outFile, err := os.OpenFile("/home/golanguser/commandoutput.txt", os.O_CREATE|os.O_RDWR, 0644)
+func HandleCNString(cn string) string {
+	var nonAlphanumericRegex = regexp.MustCompile(`[^a-zA-Z0-9 ]+`)
+	return nonAlphanumericRegex.ReplaceAllString(cn, "")
+}
+
+func ExecuteCommand(req *rest.Request, config *rest.Config, host string) ([]byte, error) {
+	outFile, err := os.OpenFile(fmt.Sprintf("/home/golanguser/commandoutput-%s.txt", host), os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
 		return nil, err
 	}
-	outErrFile, err := os.OpenFile("/home/golanguser/commanderr.txt", os.O_CREATE|os.O_RDWR, 0644)
-	if err != nil {
-		return nil, err
-	}
-	req := clientset.CoreV1().RESTClient().Post().Resource("pods").Name("openstackclient").Namespace("openstack").SubResource("exec").VersionedParams(
-		&corev1.PodExecOptions{
-			Container: "openstackclient",
-			Command:   strings.Fields(commandToRun),
-			Stdin:     true,
-			Stdout:    true,
-			Stderr:    true,
-			TTY:       false,
-		}, scheme.ParameterCodec)
-	// ex, err := remotecommand.NewWebSocketExecutor(config, "GET", req.URL().String())
 	ex, err := remotecommand.NewSPDYExecutor(config, "POST", req.URL())
 	if err != nil {
 		return nil, err
@@ -100,28 +91,46 @@ func ExecuteCommand(commandToRun string, clientset *kubernetes.Clientset, config
 	err = ex.StreamWithContext(context.Background(), remotecommand.StreamOptions{
 		Stdin:  os.Stdin,
 		Stdout: outFile,
-		Stderr: outErrFile,
+		Stderr: os.Stderr,
 		Tty:    false,
 	})
 	if err != nil {
 		return nil, err
 	}
-	errData, err := os.ReadFile(outErrFile.Name())
-	if errData != nil {
-		return nil, err
-	}
+	time.Sleep(2 * time.Second)
 	data, err := os.ReadFile(outFile.Name())
-	if errData != nil {
+	if err != nil {
 		return nil, err
 	}
-	os.Remove(outErrFile.Name())
 	os.Remove(outFile.Name())
 	return data, nil
 }
 
+func ModifyExecuteCommand(req *rest.Request, config *rest.Config, host string) error {
+	outFile, err := os.OpenFile(fmt.Sprintf("/home/golanguser/commandoutput-%s.txt", host), os.O_CREATE|os.O_RDWR, 0644)
+	if err != nil {
+		return err
+	}
+	ex, err := remotecommand.NewSPDYExecutor(config, "POST", req.URL())
+	if err != nil {
+		return err
+	}
+	err = ex.StreamWithContext(context.Background(), remotecommand.StreamOptions{
+		Stdin:  os.Stdin,
+		Stdout: outFile,
+		Stderr: os.Stderr,
+		Tty:    false,
+	})
+	if err != nil {
+		return err
+	}
+	os.Remove(outFile.Name())
+	return nil
+}
+
 func SendEmailAlert(nodeName string, filename string, spec *v1alpha1.OsphealthcheckSpec, commandToRun string) {
 	if _, err := os.Stat(filename); os.IsNotExist(err) {
-		message := fmt.Sprintf(`/usr/bin/printf '%s\n' "Subject: Alert from %s" ""  "Failed to execute command %s" | /usr/sbin/sendmail -f %s -S %s %s`, "%s", nodeName, commandToRun, spec.Email, spec.RelayHost, spec.Email)
+		message := fmt.Sprintf(`/usr/bin/printf '%s\n' "Subject: Alert from %s" "" "Alert: %s" | /usr/sbin/sendmail -f %s -S %s %s`, "%s", nodeName, commandToRun, spec.Email, spec.RelayHost, spec.Email)
 		cmd3 := exec.Command("/bin/bash", "-c", message)
 		err := cmd3.Run()
 		if err != nil {
@@ -130,14 +139,15 @@ func SendEmailAlert(nodeName string, filename string, spec *v1alpha1.Osphealthch
 		writeFile(filename, "sent")
 	} else {
 		data, _ := ReadFile(filename)
-		fmt.Println(data)
 		if data != "sent" {
-			message := fmt.Sprintf(`/usr/bin/printf '%s\n' "Subject: Alert from %s" ""  "Failed to execute command %s" | /usr/sbin/sendmail -f %s -S %s %s`, "%s", nodeName, commandToRun, spec.Email, spec.RelayHost, spec.Email)
+			message := fmt.Sprintf(`/usr/bin/printf '%s\n' "Subject: Alert from %s" "" "Alert: %s" | /usr/sbin/sendmail -f %s -S %s %s`, "%s", nodeName, commandToRun, spec.Email, spec.RelayHost, spec.Email)
 			cmd3 := exec.Command("/bin/bash", "-c", message)
 			err := cmd3.Run()
 			if err != nil {
 				fmt.Printf("Failed to send the alert: %s", err)
 			}
+			os.Truncate(filename, 0)
+			writeFile(filename, "sent")
 		}
 	}
 }
@@ -149,16 +159,20 @@ func randomString(length int) string {
 }
 
 func SendEmailRecoveredAlert(nodeName string, filename string, spec *v1alpha1.OsphealthcheckSpec, commandToRun string) {
-	data, err := ReadFile(filename)
-	if err != nil {
-		fmt.Printf("Failed to send the alert: %s", err)
-	}
-	if data == "sent" {
-		message := fmt.Sprintf(`/usr/bin/printf '%s\n' "Subject: Alert from %s" ""  "command %s which previously failed to execute is now working." | /usr/sbin/sendmail -f %s -S %s %s`, "%s", nodeName, commandToRun, spec.Email, spec.RelayHost, spec.Email)
-		cmd3 := exec.Command("/bin/bash", "-c", message)
-		err := cmd3.Run()
+	if f, err := os.OpenFile(filename, os.O_RDWR|os.O_CREATE, 0644); os.IsNotExist(err) {
+		//
+	} else {
+		data, err := ReadFile(f.Name())
 		if err != nil {
 			fmt.Printf("Failed to send the alert: %s", err)
+		}
+		if data == "sent" {
+			message := fmt.Sprintf(`/usr/bin/printf '%s\n' "Subject: Alert from %s" ""  "Resolved: %s" | /usr/sbin/sendmail -f %s -S %s %s`, "%s", nodeName, commandToRun, spec.Email, spec.RelayHost, spec.Email)
+			cmd3 := exec.Command("/bin/bash", "-c", message)
+			err := cmd3.Run()
+			if err != nil {
+				fmt.Printf("Failed to send the alert: %s", err)
+			}
 		}
 	}
 }
@@ -287,9 +301,9 @@ func ReadFile(filename string) (string, error) {
 	return string(data), nil
 }
 
-func CheckPcsStatus(activeVM string, clientset *kubernetes.Clientset, config *rest.Config) ([]string, error) {
+func CheckPcsStatus(rest *rest.Request, clientset *kubernetes.Clientset, config *rest.Config, host string) ([]string, error) {
 	var errSlice []string
-	data, err := ExecuteCommand(fmt.Sprintf("ssh -q %s.ctlplane sudo pcs status", activeVM), clientset, config)
+	data, err := ExecuteCommand(rest, config, host)
 	if err != nil {
 		return nil, err
 	}
@@ -305,8 +319,8 @@ func CheckPcsStatus(activeVM string, clientset *kubernetes.Clientset, config *re
 	return errSlice, nil
 }
 
-func CheckPcsStonith(activeVM string, clientset *kubernetes.Clientset, config *rest.Config) (bool, error) {
-	data, err := ExecuteCommand(fmt.Sprintf("ssh -q %s.ctlplane sudo pcs property show pcs-enabled", activeVM), clientset, config)
+func CheckPcsStonith(rest *rest.Request, clientset *kubernetes.Clientset, config *rest.Config, host string) (bool, error) {
+	data, err := ExecuteCommand(rest, config, host)
 	if err != nil {
 		return false, err
 	}
@@ -316,13 +330,131 @@ func CheckPcsStonith(activeVM string, clientset *kubernetes.Clientset, config *r
 	return false, nil
 }
 
-func CheckComputeService(clientset *kubernetes.Clientset, config *rest.Config) ([]string, error) {
-	var errSlice []string
-	data, err := ExecuteCommand("openstack compute service list -c Host -c State -f value", clientset, config)
+func CheckGaleraContainers(rest *rest.Request, config *rest.Config, host string) error {
+	var galera []string
+	data, err := ExecuteCommand(rest, config, host)
+	if err != nil {
+		return err
+	}
+	if len(string(data)) <= 1 {
+		return fmt.Errorf("no galera containers found")
+	}
+	sliceData := strings.Split(string(data), "\n")
+	for _, cont := range sliceData {
+		cont = strings.TrimSpace(cont)
+		if len(cont) > 0 {
+			galera = append(galera, cont)
+		}
+	}
+	if len(galera) > 1 {
+		return fmt.Errorf("multiple galera containers found")
+	}
+	return nil
+}
+
+func GetHostList(rest *rest.Request, config *rest.Config, host string) ([]string, error) {
+	var hosts []string
+	data, err := ExecuteCommand(rest, config, host)
 	if err != nil {
 		return nil, err
 	}
-	sliceData := strings.Split(string(data), "/n")
+	if len(string(data)) <= 1 {
+		return nil, fmt.Errorf("no hosts found")
+	}
+	sliceData := strings.Split(string(data), "\n")
+	for _, host := range sliceData {
+		if strings.Contains(host, "dpdkcompute") {
+			bef, _, _ := strings.Cut(host, ".")
+			hosts = append(hosts, bef)
+		}
+	}
+	return hosts, nil
+}
+
+func GetNovaContainers(rest *rest.Request, config *rest.Config, host string) error {
+	var nova []string
+	data, err := ExecuteCommand(rest, config, host)
+	if err != nil {
+		return err
+	}
+	if len(string(data)) <= 1 {
+		return fmt.Errorf("no nova containers found")
+	}
+	sliceData := strings.Split(string(data), "\n")
+	for _, cont := range sliceData {
+		cont = strings.TrimSpace(cont)
+		if len(cont) > 0 {
+			nova = append(nova, cont)
+		}
+	}
+	if len(nova) < 4 {
+		return fmt.Errorf("found only %d nova containers", len(sliceData))
+	}
+	return nil
+}
+
+func CheckOvsBond(rest *rest.Request, config *rest.Config, host string) error {
+	data, err := ExecuteCommand(rest, config, host)
+	if err != nil {
+		return err
+	}
+	if strings.Contains(string(data), "may_enable: false") {
+		return fmt.Errorf("one of the dpdk interface is down")
+	}
+	return nil
+}
+
+func CheckService(rest *rest.Request, config *rest.Config, host string) error {
+	data, err := ExecuteCommand(rest, config, host)
+	if err != nil {
+		return err
+	}
+	if !strings.Contains(string(data), "Active: active (running)") {
+		return fmt.Errorf("ovs service is down")
+	}
+	return nil
+}
+
+func CheckOvsInterfaces(rest *rest.Request, config *rest.Config, host string) error {
+	data, err := ExecuteCommand(rest, config, host)
+	if err != nil {
+		return err
+	}
+	if strings.Contains(string(data), "error") {
+		return fmt.Errorf("observing errors in ovs-vsctl show output")
+	}
+	return nil
+}
+
+func CheckLogs(rest *rest.Request, config *rest.Config, host string) error {
+	data, err := ExecuteCommand(rest, config, host)
+	if err != nil {
+		return err
+	}
+	if strings.Contains(string(data), "ERROR") || strings.Contains(string(data), "WARN") {
+		return fmt.Errorf("observing errors/warnings in log file")
+	}
+	return nil
+}
+
+func CheckTime(rest *rest.Request, config *rest.Config, host string) error {
+	data, err := ExecuteCommand(rest, config, host)
+	if err != nil {
+		return err
+	}
+	if !strings.Contains(string(data), "NTP service: active") || !strings.Contains(string(data), "System clock synchronized: yes") {
+		return fmt.Errorf("NTP service is out of sync")
+	}
+	return nil
+}
+
+func CheckComputeService(rest *rest.Request, clientset *kubernetes.Clientset, config *rest.Config, host string) ([]string, error) {
+	var errSlice []string
+	data, err := ExecuteCommand(rest, config, host)
+	if err != nil {
+		return nil, err
+	}
+	sliceData := strings.Split(string(data), "\n")
 	for _, dat := range sliceData {
 		if strings.Contains(dat, "down") {
 			datSlice := strings.SplitN(dat, " ", 2)
@@ -332,13 +464,13 @@ func CheckComputeService(clientset *kubernetes.Clientset, config *rest.Config) (
 	return errSlice, nil
 }
 
-func CheckNetworkAgents(clientset *kubernetes.Clientset, config *rest.Config) ([]string, error) {
+func CheckNetworkAgents(rest *rest.Request, clientset *kubernetes.Clientset, config *rest.Config, host string) ([]string, error) {
 	var errSlice []string
-	data, err := ExecuteCommand("openstack network agent list -c Host -c State -f value", clientset, config)
+	data, err := ExecuteCommand(rest, config, host)
 	if err != nil {
 		return nil, err
 	}
-	sliceData := strings.Split(string(data), "/n")
+	sliceData := strings.Split(string(data), "\n")
 	for _, dat := range sliceData {
 		if strings.Contains(dat, "False") {
 			datSlice := strings.SplitN(dat, " ", 2)
@@ -346,4 +478,111 @@ func CheckNetworkAgents(clientset *kubernetes.Clientset, config *rest.Config) ([
 		}
 	}
 	return errSlice, nil
+}
+
+func CheckFailedMigrations(clientset *kubernetes.Clientset) ([]string, error) {
+	var migrations []string
+	vmList := kubev1.VirtualMachineInstanceList{}
+	err := clientset.RESTClient().Get().AbsPath("/apis/kubevirt.io/v1/namespaces/openstack/virtualmachineinstances").Do(context.Background()).Into(&vmList)
+	if err != nil {
+		return nil, err
+	}
+	for _, vm := range vmList.Items {
+		if vm.Name != "" {
+			if vm.Status.MigrationState != nil {
+				if !vm.Status.MigrationState.Completed {
+					migrations = append(migrations, vm.Name)
+				}
+			}
+		}
+	}
+	if len(migrations) > 0 {
+		return migrations, nil
+	}
+	return nil, nil
+}
+
+func CheckFailedVms(clientset *kubernetes.Clientset) ([]string, []string, error) {
+	var activeVM []string
+	var nonActiveVM []string
+	vmList := kubev1.VirtualMachineInstanceList{}
+	err := clientset.RESTClient().Get().AbsPath("/apis/kubevirt.io/v1/namespaces/openstack/virtualmachineinstances").Do(context.Background()).Into(&vmList)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, vm := range vmList.Items {
+		if vm.Status.Phase == "Running" {
+			activeVM = append(activeVM, vm.Name)
+		} else {
+			nonActiveVM = append(nonActiveVM, vm.Name)
+		}
+	}
+	return activeVM, nonActiveVM, nil
+}
+
+func CheckWorkloadVm(rest *rest.Request, config *rest.Config, host string) ([]string, error) {
+	var failedVm []string
+	data, err := ExecuteCommand(rest, config, host)
+	if err != nil {
+		return nil, err
+	}
+	if len(string(data)) <= 1 {
+		return nil, nil
+	}
+	sliceData := strings.Split(string(data), "\n")
+	for _, dat := range sliceData {
+		dat = strings.TrimSpace(dat)
+		if len(dat) > 0 {
+			dat2 := strings.Split(dat, " ")
+			failedVm = append(failedVm, dat2[0]+":"+dat2[1])
+		}
+	}
+	return failedVm, nil
+}
+
+func ClearWorkloadVm(rest *rest.Request, config *rest.Config, host string) (bool, error) {
+	data, err := ExecuteCommand(rest, config, host)
+	if err != nil {
+		return false, err
+	}
+	if len(string(data)) <= 1 {
+		return false, nil
+	}
+	sliceData := strings.Split(string(data), "\n")
+	for _, cont := range sliceData {
+		cont = strings.TrimSpace(cont)
+		if len(cont) > 0 {
+			if cont == "ACTIVE" {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
+func CheckVMIPlacement(clientset *kubernetes.Clientset) ([]string, string, error) {
+	var affectVms []string
+	vmiNodes := make(map[string][]string)
+	nodeList, err := clientset.CoreV1().Nodes().List(context.Background(), metav1.ListOptions{})
+	if err != nil {
+		return nil, "", err
+	}
+	vmList := kubev1.VirtualMachineInstanceList{}
+	err = clientset.RESTClient().Get().AbsPath("/apis/kubevirt.io/v1/namespaces/openstack/virtualmachineinstances").Do(context.Background()).Into(&vmList)
+	if err != nil {
+		return nil, "", err
+	}
+	for _, vmi := range vmList.Items {
+		vmiNodes[vmi.Status.NodeName] = append(vmiNodes[vmi.Status.NodeName], vmi.Name)
+	}
+	for _, node := range nodeList.Items {
+		vminodelist := vmiNodes[node.Name]
+		if len(vminodelist) > 1 {
+			for _, vmi := range vminodelist {
+				affectVms = append(affectVms, node.Name+vmi)
+			}
+			return affectVms, node.Name, nil
+		}
+	}
+	return nil, "", nil
 }
