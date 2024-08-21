@@ -73,6 +73,7 @@ func (r *OsphealthcheckReconciler) newIssuer() (client.Object, error) {
 //+kubebuilder:rbac:groups=monitoring.spark.co.nz,resources=osphealthchecks/finalizers,verbs=update
 //+kubebuilder:rbac:groups=kubevirt.io,resources=virtualmachineinstances,verbs=get;list;watch
 //+kubebuilder:rbac:groups=kubevirt.io,namespace=openstack,resources=virtualmachineinstances,verbs=get;list;watch
+//+kubebuilder:rbac:groups=batch,resources=cronjobs,verbs=get;list;watch
 //+kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch
 //+kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
 //+kubebuilder:rbac:groups="",resources=pods,verbs=get;create;list;watch
@@ -191,6 +192,14 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("unable to get in cluster configuration due to error %s", err)
+	}
+	cjob, err := clientset.BatchV1().CronJobs("openstack").Get(context.Background(), "openstack-backup", v1.GetOptions{})
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("unable to retrieve openstack cronjob, exiting")
+	}
+	if cjob.Status.Active != nil {
+		log.Log.Info("There is an active openstack-backup job running, exiting.")
+		return ctrl.Result{}, nil
 	}
 	_, err = clientset.CoreV1().Namespaces().Get(context.Background(), "openstack", v1.GetOptions{})
 	if k8serrors.IsNotFound(err) {
