@@ -193,7 +193,11 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("unable to get in cluster configuration due to error %s", err)
 	}
-	cjob, err := clientset.BatchV1().CronJobs("openstack").Get(context.Background(), "openstack-backup", v1.GetOptions{})
+	ospJob := os.Getenv("ospbackup-job")
+	if ospJob == "" {
+		ospJob = "openstack-backup"
+	}
+	cjob, err := clientset.BatchV1().CronJobs("openstack").Get(context.Background(), ospJob, v1.GetOptions{})
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("unable to retrieve openstack cronjob, exiting")
 	}
