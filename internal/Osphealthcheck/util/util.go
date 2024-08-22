@@ -159,10 +159,10 @@ func randomString(length int) string {
 }
 
 func SendEmailRecoveredAlert(nodeName string, filename string, spec *v1alpha1.OsphealthcheckSpec, commandToRun string) {
-	if f, err := os.OpenFile(filename, os.O_RDWR|os.O_CREATE, 0644); os.IsNotExist(err) {
+	if _, err := os.Stat(filename); os.IsNotExist(err) {
 		//
 	} else {
-		data, err := ReadFile(f.Name())
+		data, err := ReadFile(filename)
 		if err != nil {
 			fmt.Printf("Failed to send the alert: %s", err)
 		}

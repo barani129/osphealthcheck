@@ -74,6 +74,7 @@ func (r *OsphealthcheckReconciler) newIssuer() (client.Object, error) {
 //+kubebuilder:rbac:groups=kubevirt.io,resources=virtualmachineinstances,verbs=get;list;watch
 //+kubebuilder:rbac:groups=kubevirt.io,namespace=openstack,resources=virtualmachineinstances,verbs=get;list;watch
 //+kubebuilder:rbac:groups=batch,resources=cronjobs,verbs=get;list;watch
+//+kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch
 //+kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch
 //+kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
 //+kubebuilder:rbac:groups="",resources=pods,verbs=get;create;list;watch
@@ -197,14 +198,25 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	if ospJob == "" {
 		ospJob = "openstack-backup"
 	}
-	cjob, err := clientset.BatchV1().CronJobs("openstack").Get(context.Background(), ospJob, v1.GetOptions{})
+	ojob, err := clientset.BatchV1().CronJobs("openstack").Get(context.Background(), ospJob, v1.GetOptions{})
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("unable to retrieve openstack cronjob, exiting")
 	}
-	if cjob.Status.Active != nil {
-		log.Log.Info("There is an active openstack-backup job running, exiting.")
+	if ojob.Status.Active != nil {
+		log.Log.Info("openstack cronjob is running, exiting.")
 		return ctrl.Result{}, nil
 	}
+	cjob, err := clientset.BatchV1().Jobs("openstack").List(context.Background(), v1.ListOptions{})
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("unable to retrieve jobs, exiting")
+	}
+	for _, job := range cjob.Items {
+		if job.Status.Active > 0 {
+			log.Log.Info("There is an active/pending job running, exiting.")
+			return ctrl.Result{}, nil
+		}
+	}
+
 	_, err = clientset.CoreV1().Namespaces().Get(context.Background(), "openstack", v1.GetOptions{})
 	if k8serrors.IsNotFound(err) {
 		return ctrl.Result{}, fmt.Errorf("openstack namespace is not found, not running on openstack ctlplane on openshift cluster")
@@ -278,10 +290,12 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		}
 		if len(nonActiveVM) > 0 {
 			for _, vm := range nonActiveVM {
-				if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-					util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", vm, "non-active"), spec, fmt.Sprintf("found a failed or stopped vm %s", vm))
+				if !slices.Contains(status.FailedChecks, fmt.Sprintf("found a failed or stopped vm %s", vm)) {
+					if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+						util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", vm, "non-active"), spec, fmt.Sprintf("found a failed or stopped vm %s", vm))
+					}
+					status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("found a failed or stopped vm %s", vm))
 				}
-				status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("found a failed or stopped vm %s", vm))
 			}
 		}
 		log.Log.Info("Checking failed migrations in Openstack namespace")
@@ -290,10 +304,12 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			log.Log.Error(err, "unable to retrieve vm list in openstack namespace")
 		}
 		if len(mig) > 0 {
-			if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-				util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", "error", "failed-ongoing-mig"), spec, fmt.Sprintf("found a failed or an on-going migration of vm %v", mig))
+			if !slices.Contains(status.FailedChecks, "found a failed or on-going migration") {
+				if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+					util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", "error", "failed-ongoing-mig"), spec, fmt.Sprintf("found a failed or an on-going migration of vm %v", mig))
+				}
+				status.FailedChecks = append(status.FailedChecks, "found a failed or on-going migration")
 			}
-			status.FailedChecks = append(status.FailedChecks, "found a failed or on-going migration")
 		}
 		log.Log.Info("Checking virtual machine instances placement in Openstack namespace")
 		affectedVms, node, err := util.CheckVMIPlacement(clientset)
@@ -301,20 +317,23 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			log.Log.Error(err, "unable to retrieve vm list in openstack namespace")
 		}
 		if len(affectedVms) > 0 {
-			if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-				util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", "error", "vmi-placement"), spec, fmt.Sprintf("found multiple ctlplane VMs in the same node %s", node))
+			if !slices.Contains(status.FailedChecks, "found multiple ctlplane VMs in the same node, please execute oc get vm -n openstack -o wide for details") {
+				if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+					util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", "error", "vmi-placement"), spec, fmt.Sprintf("found multiple ctlplane VMs in the same node %s", node))
+				}
+				status.FailedChecks = append(status.FailedChecks, "found multiple ctlplane VMs in the same node, please execute oc get vm -n openstack -o wide for details")
 			}
-			status.FailedChecks = append(status.FailedChecks, "found multiple ctlplane VMs in the same node, please execute oc get vm -n openstack -o wide for details")
 		}
 		log.Log.Info("Modifying ssh config file permission to avoid openstack command execution failure after openstackclient pod restarts")
 		modifyReq := returnCommand(r, "chmod 644 /home/cloud-admin/.ssh/config")
 		err = util.ModifyExecuteCommand(modifyReq, r.RESTConfig, "sshfile")
 		if err != nil {
-			if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-				util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", "modifyfileperm", "openstackclient"), spec, "failed to modify file permission (/home/cloud-admin/.ssh/config) in openstackclient pod")
-
+			if !slices.Contains(status.FailedChecks, "failed to modify cloud-admin ssh file permission") {
+				if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+					util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", "modifyfileperm", "openstackclient"), spec, "failed to modify file permission (/home/cloud-admin/.ssh/config) in openstackclient pod")
+				}
+				status.FailedChecks = append(status.FailedChecks, "failed to modify cloud-admin ssh file permission")
 			}
-			status.FailedChecks = append(status.FailedChecks, "failed to modify cloud-admin ssh file permission")
 			return ctrl.Result{}, fmt.Errorf("unable to modify file permission of /home/cloud-admin/.ssh/config in openstackclient pod, exiting as subsequent healtchecks might fail")
 		}
 		log.Log.Info("Check pcs status")
@@ -324,10 +343,12 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			log.Log.Error(err, "failed to execute pcs status command ")
 		}
 		if len(pcsErr) > 0 {
-			if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-				util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", "error", "pcs"), spec, "found pcs errors in controller, please check")
+			if !slices.Contains(status.FailedChecks, "pcs errors") {
+				if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+					util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", "error", "pcs"), spec, "found pcs errors in controller, please check")
+				}
+				status.FailedChecks = append(status.FailedChecks, "pcs errors")
 			}
-			status.FailedChecks = append(status.FailedChecks, "pcs errors")
 		}
 		log.Log.Info("Check pcs stonith status")
 		stonithReq := returnCommand(r, fmt.Sprintf("ssh -q %s.ctlplane sudo pcs property show stonith-enabled", generateRandom(activeVM)))
@@ -336,10 +357,12 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			log.Log.Error(err, "failed to execute pcs stonith check command")
 		}
 		if stonith {
-			if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-				util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", "checkstonith", "pcs"), spec, "pcs stonith is disabled")
+			if !slices.Contains(status.FailedChecks, "stonith is disabled, please ignore if it is intended") {
+				if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+					util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", "checkstonith", "pcs"), spec, "pcs stonith is disabled")
+				}
+				status.FailedChecks = append(status.FailedChecks, "stonith is disabled, please ignore if it is intended")
 			}
-			status.FailedChecks = append(status.FailedChecks, "stonith is disabled, please ignore if it is intended")
 		}
 		// check external IPs connectivity
 		log.Log.Info("Check external IPs connectivity from openstackclient pod")
@@ -352,10 +375,12 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 					extReq := returnCommand(r, fmt.Sprintf("ping -c 3 %s", external))
 					err := util.ModifyExecuteCommand(extReq, r.RESTConfig, util.HandleCNString(external))
 					if err != nil {
-						if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-							util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", external, "external-ip"), spec, fmt.Sprintf("external IP %s is unreachable from openstackclient pod", external))
+						if !slices.Contains(status.FailedChecks, fmt.Sprintf("external IP %s is unreachable from %s.ctlplane", external, generateRandom(activeVM))) {
+							if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+								util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", external, "external-ip"), spec, fmt.Sprintf("external IP %s is unreachable from openstackclient pod", external))
+							}
+							status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("external IP %s is unreachable from %s.ctlplane", external, generateRandom(activeVM)))
 						}
-						status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("external IP %s is unreachable from %s.ctlplane", external, generateRandom(activeVM)))
 					}
 				}()
 			}
@@ -371,10 +396,12 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 					vmReq := returnCommand(r, fmt.Sprintf("ssh -q %s.ctlplane sudo nc -zv -w 3 %s 22", vm, sftpIP[0]))
 					err := util.ModifyExecuteCommand(vmReq, r.RESTConfig, util.HandleCNString(vm))
 					if err != nil {
-						if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-							util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", vm, sftpIP[0]), spec, fmt.Sprintf("backup server IP %s is unreachable from control plane VM %s", sftpIP[0], vm))
+						if !slices.Contains(status.FailedChecks, fmt.Sprintf("backup server %s is unreachable from control plane VM %s", sftpIP[0], generateRandom(activeVM))) {
+							if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+								util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", vm, sftpIP[0]), spec, fmt.Sprintf("backup server IP %s is unreachable from control plane VM %s", sftpIP[0], vm))
+							}
+							status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("backup server %s is unreachable from control plane VM %s", sftpIP[0], generateRandom(activeVM)))
 						}
-						status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("backup server %s is unreachable from control plane VM %s", sftpIP[0], generateRandom(activeVM)))
 					}
 				}()
 			}
@@ -389,10 +416,12 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				vmReq := returnCommand(r, fmt.Sprintf("ssh -q %s.ctlplane sudo podman ps -a --format {{.ID}} --filter name=galera", vm))
 				err := util.CheckGaleraContainers(vmReq, r.RESTConfig, util.HandleCNString(vm))
 				if err != nil {
-					if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-						util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", vm, "galera"), spec, fmt.Sprintf("found multiple running galera containers in VM %s", vm))
+					if !slices.Contains(status.FailedChecks, fmt.Sprintf("found multiple running galera containers in VM %s", vm)) {
+						if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+							util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", vm, "galera"), spec, fmt.Sprintf("found multiple running galera containers in VM %s", vm))
+						}
+						status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("found multiple running galera containers in VM %s", vm))
 					}
-					status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("found multiple running galera containers in VM %s", vm))
 				}
 			}()
 		}
@@ -412,10 +441,12 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				if len(failedVm) > 0 {
 					for _, vm := range failedVm {
 						vmData := strings.SplitN(vm, ":", 2)
-						if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-							util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", vmData[0], vmData[1]), spec, fmt.Sprintf("VM %s has status %s on host %s", vmData[0], vmstatus, vmData[1]))
+						if !slices.Contains(status.FailedChecks, fmt.Sprintf("found VM %s with status %s in host %s", vmData[0], vmstatus, vmData[1])) {
+							if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+								util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", vmData[0], vmData[1]), spec, fmt.Sprintf("VM %s has status %s on host %s", vmData[0], vmstatus, vmData[1]))
+							}
+							status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("found VM %s with status %s in host %s", vmData[0], vmstatus, vmData[1]))
 						}
-						status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("found VM %s with status %s in host %s", vmData[0], vmstatus, vmData[1]))
 					}
 				}
 			}()
@@ -437,10 +468,12 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 					coReq := returnCommand(r, fmt.Sprintf("ssh -q %s.ctlplane sudo ping -c 3 %s.%s", generateRandom(activeVM), host, co))
 					err := util.ModifyExecuteCommand(coReq, r.RESTConfig, util.HandleCNString(host))
 					if err != nil {
-						if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-							util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, co), spec, fmt.Sprintf("host %s is unreachable on %s network", host, co))
+						if !slices.Contains(status.FailedChecks, fmt.Sprintf("host %s is unreachable on  %s network", host, co)) {
+							if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+								util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, co), spec, fmt.Sprintf("host %s is unreachable on %s network", host, co))
+							}
+							status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("host %s is unreachable on  %s network", host, co))
 						}
-						status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("host %s is unreachable on  %s network", host, co))
 					}
 				}
 			}()
@@ -454,10 +487,12 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		}
 		if len(hostsErr) > 0 {
 			for _, host := range hostsErr {
-				if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-					util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "computesvc"), spec, fmt.Sprintf("nova service is down in compute %s", host))
+				if !slices.Contains(status.FailedChecks, fmt.Sprintf("openstack compute service is down in node %s", host)) {
+					if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+						util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "computesvc"), spec, fmt.Sprintf("nova service is down in compute %s", host))
+					}
+					status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("openstack compute service is down in node %s", host))
 				}
-				status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("openstack compute service is down in node %s", host))
 			}
 		}
 		log.Log.Info("Check Openstack network agents")
@@ -468,10 +503,12 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		}
 		if len(netErr) > 0 {
 			for _, host := range netErr {
-				if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-					util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "networkagent"), spec, fmt.Sprintf("network agent is down in %s", host))
+				if !slices.Contains(status.FailedChecks, fmt.Sprintf("openstack network agent is down in node %s", host)) {
+					if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+						util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "networkagent"), spec, fmt.Sprintf("network agent is down in %s", host))
+					}
+					status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("openstack network agent is down in node %s", host))
 				}
-				status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("openstack network agent is down in node %s", host))
 			}
 		}
 		// check nova containers
@@ -482,10 +519,12 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				novaReq := returnCommand(r, fmt.Sprintf("ssh -q %s.ctlplane sudo podman ps --format {{.ID}} --filter name=nova", host))
 				err := util.GetNovaContainers(novaReq, r.RESTConfig, util.HandleCNString(host))
 				if err != nil {
-					if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-						util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "nova"), spec, fmt.Sprintf("Not all nova containers are up and running on host %s", host))
+					if !slices.Contains(status.FailedChecks, fmt.Sprintf("Not all nova containers are up and running on host %s", host)) {
+						if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+							util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "nova"), spec, fmt.Sprintf("Not all nova containers are up and running on host %s", host))
+						}
+						status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("Not all nova containers are up and running on host %s", host))
 					}
-					status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("Not all nova containers are up and running on host %s", host))
 				}
 			}()
 		}
@@ -499,10 +538,12 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				bond3Req := returnCommand(r, fmt.Sprintf("ssh -q %s.ctlplane sudo ovs-appctl bond/show dpdkbond3", host))
 				err := util.CheckOvsBond(bond3Req, r.RESTConfig, util.HandleCNString(host))
 				if err != nil {
-					if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-						util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-bond3"), spec, fmt.Sprintf("dpdkbond3 %s in %s", err, host))
+					if !slices.Contains(status.FailedChecks, fmt.Sprintf("dpdkbond3 %s in %s", err, host)) {
+						if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+							util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-bond3"), spec, fmt.Sprintf("dpdkbond3 %s in %s", err, host))
+						}
+						status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("dpdkbond3 %s in %s", err, host))
 					}
-					status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("dpdkbond3 %s in %s", err, host))
 				}
 			}()
 		}
@@ -514,10 +555,12 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				bond4Req := returnCommand(r, fmt.Sprintf("ssh -q %s.ctlplane sudo ovs-appctl bond/show dpdkbond4", host))
 				err := util.CheckOvsBond(bond4Req, r.RESTConfig, util.HandleCNString(host))
 				if err != nil {
-					if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-						util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-bond4"), spec, fmt.Sprintf("dpdkbond4 %s in %s", err, host))
+					if !slices.Contains(status.FailedChecks, fmt.Sprintf("dpdkbond4 %s in %s", err, host)) {
+						if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+							util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-bond4"), spec, fmt.Sprintf("dpdkbond4 %s in %s", err, host))
+						}
+						status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("dpdkbond4 %s in %s", err, host))
 					}
-					status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("dpdkbond4 %s in %s", err, host))
 				}
 			}()
 		}
@@ -531,10 +574,12 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				srvReq := returnCommand(r, fmt.Sprintf("ssh -q %s.ctlplane sudo systemctl status ovs-vswitchd.service", host))
 				err := util.CheckService(srvReq, r.RESTConfig, util.HandleCNString(host))
 				if err != nil {
-					if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-						util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-srv"), spec, fmt.Sprintf("%s in %s", err, host))
+					if !slices.Contains(status.FailedChecks, fmt.Sprintf("%s in %s", err, host)) {
+						if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+							util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-srv"), spec, fmt.Sprintf("%s in %s", err, host))
+						}
+						status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("%s in %s", err, host))
 					}
-					status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("%s in %s", err, host))
 				}
 			}()
 		}
@@ -548,10 +593,12 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				intReq := returnCommand(r, fmt.Sprintf("ssh -q %s.ctlplane sudo cat /var/log/openvswitch/ovs-vswitchd.log", host))
 				err := util.CheckLogs(intReq, r.RESTConfig, util.HandleCNString(host))
 				if err != nil {
-					if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-						util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-log"), spec, fmt.Sprintf("%s of ovs in %s", err, host))
+					if !slices.Contains(status.FailedChecks, fmt.Sprintf("%s of ovs in %s", err, host)) {
+						if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+							util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-log"), spec, fmt.Sprintf("%s of ovs in %s", err, host))
+						}
+						status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("%s of ovs in %s", err, host))
 					}
-					status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("%s of ovs in %s", err, host))
 				}
 			}()
 		}
@@ -565,10 +612,12 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				intReq := returnCommand(r, fmt.Sprintf("ssh -q %s.ctlplane sudo ovs-vsctl show", host))
 				err := util.CheckOvsInterfaces(intReq, r.RESTConfig, util.HandleCNString(host))
 				if err != nil {
-					if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-						util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-int"), spec, fmt.Sprintf("%s in %s", err, host))
+					if !slices.Contains(status.FailedChecks, fmt.Sprintf("%s in %s", err, host)) {
+						if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+							util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-int"), spec, fmt.Sprintf("%s in %s", err, host))
+						}
+						status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("%s in %s", err, host))
 					}
-					status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("%s in %s", err, host))
 				}
 			}()
 		}
@@ -582,10 +631,12 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				intReq := returnCommand(r, fmt.Sprintf("ssh -q %s.ctlplane sudo timedatectl", host))
 				err := util.CheckTime(intReq, r.RESTConfig, util.HandleCNString(host))
 				if err != nil {
-					if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-						util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "chronyd"), spec, fmt.Sprintf("%s in %s", err, host))
+					if !slices.Contains(status.FailedChecks, fmt.Sprintf("%s in %s", err, host)) {
+						if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+							util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "chronyd"), spec, fmt.Sprintf("%s in %s", err, host))
+						}
+						status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("%s in %s", err, host))
 					}
-					status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("%s in %s", err, host))
 				}
 			}()
 		}
@@ -599,10 +650,12 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				intReq := returnCommand(r, fmt.Sprintf("ssh -q %s.ctlplane sudo cat /var/log/containers/nova/nova-compute.log", host))
 				err := util.CheckLogs(intReq, r.RESTConfig, util.HandleCNString(host))
 				if err != nil {
-					if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-						util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "nova-log"), spec, fmt.Sprintf("%s of nova in %s", err, host))
+					if !slices.Contains(status.FailedChecks, fmt.Sprintf("%s of nova in %s", err, host)) {
+						if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+							util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "nova-log"), spec, fmt.Sprintf("%s of nova in %s", err, host))
+						}
+						status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("%s of nova in %s", err, host))
 					}
-					status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("%s of nova in %s", err, host))
 				}
 			}()
 		}
@@ -616,10 +669,12 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				srvReq := returnCommand(r, fmt.Sprintf("ssh -q %s.ctlplane sudo systemctl status splunk.service", host))
 				err := util.CheckService(srvReq, r.RESTConfig, util.HandleCNString(host))
 				if err != nil {
-					if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-						util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "splunk"), spec, fmt.Sprintf("%s in %s", err, host))
+					if !slices.Contains(status.FailedChecks, fmt.Sprintf("%s in %s", err, host)) {
+						if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+							util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "splunk"), spec, fmt.Sprintf("%s in %s", err, host))
+						}
+						status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("%s in %s", err, host))
 					}
-					status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("%s in %s", err, host))
 				}
 			}()
 		}
@@ -636,21 +691,23 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			}
 			if len(nonActiveVM) > 0 {
 				for _, vm := range nonActiveVM {
-					if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-						util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", vm, "non-active"), spec, fmt.Sprintf("found a failed or stopped vm %s", vm))
+					if !slices.Contains(status.FailedChecks, fmt.Sprintf("found a failed or stopped vm %s", vm)) {
+						if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+							util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", vm, "non-active"), spec, fmt.Sprintf("found a failed or stopped vm %s", vm))
+						}
+						status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("found a failed or stopped vm %s", vm))
 					}
-					status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("found a failed or stopped vm %s", vm))
 				}
 			} else {
 				for _, vm := range activeVM {
-					if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-						util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", vm, "non-active"), spec, fmt.Sprintf("found a failed or stopped vm %s", vm))
-					}
 					if slices.Contains(status.FailedChecks, fmt.Sprintf("found a failed or stopped vm %s", vm)) {
+						if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+							util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", vm, "non-active"), spec, fmt.Sprintf("found a failed or stopped vm %s", vm))
+						}
 						idx := slices.Index(status.FailedChecks, fmt.Sprintf("found a failed or stopped vm %s", vm))
 						deleteElementSlice(status.FailedChecks, idx)
+						os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", vm, "non-active"))
 					}
-					os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", vm, "non-active"))
 				}
 			}
 			log.Log.Info("Checking failed migrations in Openstack namespace")
@@ -659,19 +716,21 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				log.Log.Error(err, "unable to retrieve vm list in openstack namespace")
 			}
 			if len(mig) > 0 {
-				if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-					util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", "error", "failed-ongoing-mig"), spec, fmt.Sprintf("found a failed or an on-going migration in vm %v", mig))
+				if !slices.Contains(status.FailedChecks, "found a failed or on-going migration") {
+					if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+						util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", "error", "failed-ongoing-mig"), spec, fmt.Sprintf("found a failed or an on-going migration in vm %v", mig))
+					}
+					status.FailedChecks = append(status.FailedChecks, "found a failed or on-going migration")
 				}
-				status.FailedChecks = append(status.FailedChecks, "found a failed or on-going migration")
 			} else {
-				if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-					util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", "error", "failed-ongoing-mig"), spec, fmt.Sprintf("VM %v is posting successful migration state", mig))
-				}
 				if slices.Contains(status.FailedChecks, "found a failed or on-going migration") {
+					if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+						util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", "error", "failed-ongoing-mig"), spec, fmt.Sprintf("VM %v is posting successful migration state", mig))
+					}
 					idx := slices.Index(status.FailedChecks, "found a failed or on-going migration")
 					deleteElementSlice(status.FailedChecks, idx)
+					os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", "error", "failed-ongoing-mig"))
 				}
-				os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", "error", "failed-ongoing-mig"))
 			}
 			log.Log.Info("Checking virtual machine instances placement in Openstack namespace")
 			affectedVms, node, err := util.CheckVMIPlacement(clientset)
@@ -679,39 +738,42 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				log.Log.Error(err, "unable to retrieve vm list in openstack namespace")
 			}
 			if len(affectedVms) > 0 {
-				if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-					util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", "error", "vmi-placement"), spec, fmt.Sprintf("found multiple ctlplane VMs in the same node %s", node))
+				if !slices.Contains(status.FailedChecks, "found multiple ctlplane VMs in the same node, please execute oc get vm -n openstack -o wide for details") {
+					if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+						util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", "error", "vmi-placement"), spec, fmt.Sprintf("found multiple ctlplane VMs in the same node %s", node))
+					}
+					status.FailedChecks = append(status.FailedChecks, "found multiple ctlplane VMs in the same node, please execute oc get vm -n openstack -o wide for details")
 				}
-				status.FailedChecks = append(status.FailedChecks, "found multiple ctlplane VMs in the same node, please execute oc get vm -n openstack -o wide for details")
 			} else {
-				if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-					util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", "error", "vmi-placement"), spec, "ctlplane VMs are now placed in separate nodes")
-				}
 				if slices.Contains(status.FailedChecks, "found multiple ctlplane VMs in the same node, please execute oc get vm -n openstack -o wide for details") {
+					if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+						util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", "error", "vmi-placement"), spec, "ctlplane VMs are now placed in separate nodes")
+					}
 					idx := slices.Index(status.FailedChecks, "found multiple ctlplane VMs in the same node, please execute oc get vm -n openstack -o wide for details")
 					deleteElementSlice(status.FailedChecks, idx)
+					os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", "error", "vmi-placement"))
 				}
-				os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", "error", "vmi-placement"))
 			}
 			log.Log.Info("Modifying ssh config file permission to avoid openstack command execution failure after openstackclient pod restarts")
 			modifyReq := returnCommand(r, "chmod 644 /home/cloud-admin/.ssh/config")
 			err = util.ModifyExecuteCommand(modifyReq, r.RESTConfig, "sshfile")
 			if err != nil {
-				if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-					util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", "modifyfileperm", "openstackclient"), spec, "failed to modify file permission (/home/cloud-admin/.ssh/config) in openstackclient pod")
-
+				if !slices.Contains(status.FailedChecks, "failed to modify cloud-admin ssh file permission") {
+					if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+						util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", "modifyfileperm", "openstackclient"), spec, "failed to modify file permission (/home/cloud-admin/.ssh/config) in openstackclient pod")
+					}
+					status.FailedChecks = append(status.FailedChecks, "failed to modify cloud-admin ssh file permission")
 				}
-				status.FailedChecks = append(status.FailedChecks, "failed to modify cloud-admin ssh file permission")
 				return ctrl.Result{}, fmt.Errorf("unable to modify file permission of /home/cloud-admin/.ssh/config in openstackclient pod, exiting as subsequent healtchecks might fail")
 			} else {
-				if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-					util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", "modifyfileperm", "openstackclient"), spec, "modified file permission (/home/cloud-admin/.ssh/config) in openstackclient pod")
-				}
 				if slices.Contains(status.FailedChecks, "failed to modify cloud-admin ssh file permission") {
+					if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+						util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", "modifyfileperm", "openstackclient"), spec, "modified file permission (/home/cloud-admin/.ssh/config) in openstackclient pod")
+					}
 					idx := slices.Index(status.FailedChecks, "failed to modify cloud-admin ssh file permission")
 					deleteElementSlice(status.FailedChecks, idx)
+					os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", "modifyfileperm", "openstackclient"))
 				}
-				os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", "modifyfileperm", "openstackclient"))
 			}
 			log.Log.Info("Check pcs status")
 			pcsReq := returnCommand(r, fmt.Sprintf("ssh -q %s.ctlplane sudo pcs status", generateRandom(activeVM)))
@@ -720,19 +782,21 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				log.Log.Error(err, "failed to execute pcs status command ")
 			}
 			if len(pcsErr) > 0 {
-				if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-					util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", "error", "pcs"), spec, "found pcs errors in controller, please check")
+				if !slices.Contains(status.FailedChecks, "pcs errors") {
+					if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+						util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", "error", "pcs"), spec, "found pcs errors in controller, please check")
+					}
+					status.FailedChecks = append(status.FailedChecks, "pcs errors")
 				}
-				status.FailedChecks = append(status.FailedChecks, "pcs errors")
 			} else {
-				if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-					util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", "error", "pcs"), spec, "pcs errors are cleared")
-				}
 				if slices.Contains(status.FailedChecks, "pcs errors") {
+					if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+						util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", "error", "pcs"), spec, "pcs errors are cleared")
+					}
 					idx := slices.Index(status.FailedChecks, "pcs errors")
 					deleteElementSlice(status.FailedChecks, idx)
+					os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", "error", "pcs"))
 				}
-				os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", "error", "pcs"))
 			}
 			log.Log.Info("Check pcs stonith status")
 			stonithReq := returnCommand(r, fmt.Sprintf("ssh -q %s.ctlplane sudo pcs property show stonith-enabled", generateRandom(activeVM)))
@@ -741,19 +805,21 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				log.Log.Error(err, "failed to execute pcs stonith check command")
 			}
 			if stonith {
-				if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-					util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", "checkstonith", "pcs"), spec, "pcs stonith is disabled")
+				if !slices.Contains(status.FailedChecks, "stonith is disabled, please ignore if it is intended") {
+					if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+						util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", "checkstonith", "pcs"), spec, "pcs stonith is disabled")
+					}
+					status.FailedChecks = append(status.FailedChecks, "stonith is disabled, please ignore if it is intended")
 				}
-				status.FailedChecks = append(status.FailedChecks, "stonith is disabled, please ignore if it is intended")
 			} else {
-				if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-					util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", "checkstonith", "pcs"), spec, "pcs stonith is now enabled")
-				}
 				if slices.Contains(status.FailedChecks, "stonith is disabled, please ignore if it is intended") {
+					if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+						util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", "checkstonith", "pcs"), spec, "pcs stonith is now enabled")
+					}
 					idx := slices.Index(status.FailedChecks, "stonith is disabled, please ignore if it is intended")
 					deleteElementSlice(status.FailedChecks, idx)
+					os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", "checkstonith", "pcs"))
 				}
-				os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", "checkstonith", "pcs"))
 			}
 
 			// check external IPs connectivity
@@ -766,19 +832,21 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 						extReq := returnCommand(r, fmt.Sprintf("ping -c 3 %s", external))
 						err := util.ModifyExecuteCommand(extReq, r.RESTConfig, util.HandleCNString(external))
 						if err != nil {
-							if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-								util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", external, "external-ip"), spec, fmt.Sprintf("external IP %s is unreachable", external))
+							if !slices.Contains(status.FailedChecks, fmt.Sprintf("external IP %s is unreachable", external)) {
+								if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+									util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", external, "external-ip"), spec, fmt.Sprintf("external IP %s is unreachable", external))
+								}
+								status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("external IP %s is unreachable from %s.ctlplane", external, generateRandom(activeVM)))
 							}
-							status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("external IP %s is unreachable from %s.ctlplane", external, generateRandom(activeVM)))
 						} else {
-							if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-								util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", external, "external-ip"), spec, fmt.Sprintf("external IP %s is now reachable", external))
-							}
 							if slices.Contains(status.FailedChecks, fmt.Sprintf("external IP %s is unreachable", external)) {
+								if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+									util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", external, "external-ip"), spec, fmt.Sprintf("external IP %s is now reachable", external))
+								}
 								idx := slices.Index(status.FailedChecks, fmt.Sprintf("external IP %s is unreachable", external))
 								deleteElementSlice(status.FailedChecks, idx)
+								os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", external, "external-ip"))
 							}
-							os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", external, "external-ip"))
 						}
 					}()
 				}
@@ -794,19 +862,21 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 						vmReq := returnCommand(r, fmt.Sprintf("ssh -q %s.ctlplane sudo nc -zv -w 3 %s 22", vm, sftpIP[0]))
 						err := util.ModifyExecuteCommand(vmReq, r.RESTConfig, util.HandleCNString(vm))
 						if err != nil {
-							if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-								util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", vm, sftpIP[0]), spec, fmt.Sprintf("backup server IP %s is unreachable from control plane VM %s", sftpIP[0], vm))
+							if !slices.Contains(status.FailedChecks, fmt.Sprintf("backup server %s is unreachable from control plane VM %s", sftpIP[0], generateRandom(activeVM))) {
+								if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+									util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", vm, sftpIP[0]), spec, fmt.Sprintf("backup server IP %s is unreachable from control plane VM %s", sftpIP[0], vm))
+								}
+								status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("backup server %s is unreachable from control plane VM %s", sftpIP[0], generateRandom(activeVM)))
 							}
-							status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("backup server %s is unreachable from control plane VM %s", sftpIP[0], generateRandom(activeVM)))
 						} else {
-							if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-								util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", vm, sftpIP[0]), spec, fmt.Sprintf("backup server IP %s is now reachable from control plane VM %s", sftpIP[0], vm))
-							}
 							if slices.Contains(status.FailedChecks, fmt.Sprintf("backup server %s is unreachable from control plane VM %s", sftpIP[0], generateRandom(activeVM))) {
+								if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+									util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", vm, sftpIP[0]), spec, fmt.Sprintf("backup server IP %s is now reachable from control plane VM %s", sftpIP[0], vm))
+								}
 								idx := slices.Index(status.FailedChecks, fmt.Sprintf("backup server %s is unreachable from control plane VM %s", sftpIP[0], generateRandom(activeVM)))
 								deleteElementSlice(status.FailedChecks, idx)
+								os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", vm, sftpIP[0]))
 							}
-							os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", vm, sftpIP[0]))
 						}
 					}()
 				}
@@ -821,19 +891,21 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 					vmReq := returnCommand(r, fmt.Sprintf("ssh -q %s.ctlplane sudo podman ps -a --format {{.ID}} --filter name=galera", vm))
 					err := util.CheckGaleraContainers(vmReq, r.RESTConfig, util.HandleCNString(vm))
 					if err != nil {
-						if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-							util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", vm, "galera"), spec, fmt.Sprintf("found multiple running galera containers in VM %s", vm))
+						if !slices.Contains(status.FailedChecks, fmt.Sprintf("found multiple running galera containers in VM %s", vm)) {
+							if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+								util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", vm, "galera"), spec, fmt.Sprintf("found multiple running galera containers in VM %s", vm))
+							}
+							status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("found multiple running galera containers in VM %s", vm))
 						}
-						status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("found multiple running galera containers in VM %s", vm))
 					} else {
-						if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-							util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", vm, "galera"), spec, fmt.Sprintf("found multiple running galera containers in VM %s", vm))
-						}
 						if slices.Contains(status.FailedChecks, fmt.Sprintf("found multiple running galera containers in VM %s", vm)) {
+							if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+								util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", vm, "galera"), spec, fmt.Sprintf("found multiple running galera containers in VM %s", vm))
+							}
 							idx := slices.Index(status.FailedChecks, fmt.Sprintf("found multiple running galera containers in VM %s", vm))
 							deleteElementSlice(status.FailedChecks, idx)
+							os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", vm, "galera"))
 						}
-						os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", vm, "galera"))
 					}
 				}()
 			}
@@ -855,10 +927,12 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 						for _, vm := range failedVm {
 							allFailedVms = append(allFailedVms, vm)
 							vmData := strings.SplitN(vm, ":", 2)
-							if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-								util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", vmData[0], vmData[1]), spec, fmt.Sprintf("VM %s has non-running status in host %s", vmData[0], vmData[1]))
+							if !slices.Contains(status.FailedChecks, fmt.Sprintf("found VM %s with non-running status on host %s", vmData[0], vmData[1])) {
+								if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+									util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", vmData[0], vmData[1]), spec, fmt.Sprintf("VM %s has non-running status in host %s", vmData[0], vmData[1]))
+								}
+								status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("found VM %s with non-running status in host %s", vmData[0], vmData[1]))
 							}
-							status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("found VM %s with non-running status in host %s", vmData[0], vmData[1]))
 						}
 					}
 				}()
@@ -876,14 +950,14 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 							log.Log.Error(err, "unable to retrieve active vm")
 						}
 						if activev {
-							if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-								util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", vmData[0], vmData[1]), spec, fmt.Sprintf("VM %s is now running with active status on host %s", vmData[0], vmData[1]))
-							}
 							if slices.Contains(status.FailedChecks, fmt.Sprintf("found VM %s with non-running status on host %s", vmData[0], vmData[1])) {
+								if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+									util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", vmData[0], vmData[1]), spec, fmt.Sprintf("VM %s is now running with active status on host %s", vmData[0], vmData[1]))
+								}
 								idx := slices.Index(status.FailedChecks, fmt.Sprintf("found VM %s with non-running status on host %s", vmData[0], vmData[1]))
 								deleteElementSlice(status.FailedChecks, idx)
+								os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", vmData[0], vmData[1]))
 							}
-							os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", vmData[0], vmData[1]))
 						}
 					}()
 				}
@@ -905,19 +979,21 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 						coReq := returnCommand(r, fmt.Sprintf("ssh -q %s.ctlplane sudo ping -c 3 %s.%s", generateRandom(activeVM), host, co))
 						err := util.ModifyExecuteCommand(coReq, r.RESTConfig, util.HandleCNString(host))
 						if err != nil {
-							if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-								util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, co), spec, fmt.Sprintf("host %s is unreachable on  %s network", host, co))
+							if !slices.Contains(status.FailedChecks, fmt.Sprintf("host %s is unreachable on  %s network", host, co)) {
+								if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+									util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, co), spec, fmt.Sprintf("host %s is unreachable on  %s network", host, co))
+								}
+								status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("host %s is unreachable on  %s network", host, co))
 							}
-							status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("host %s is unreachable on  %s network", host, co))
 						} else {
-							if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-								util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, co), spec, fmt.Sprintf("host %s is now reachable on  %s network", host, co))
-							}
 							if slices.Contains(status.FailedChecks, fmt.Sprintf("host %s is unreachable on  %s network", host, co)) {
+								if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+									util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, co), spec, fmt.Sprintf("host %s is now reachable on  %s network", host, co))
+								}
 								idx := slices.Index(status.FailedChecks, fmt.Sprintf("host %s is unreachable on  %s network", host, co))
 								deleteElementSlice(status.FailedChecks, idx)
+								os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", host, co))
 							}
-							os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", host, co))
 						}
 					}
 				}()
@@ -931,24 +1007,26 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			}
 			if len(hostsErr) > 0 {
 				for _, host := range hostsErr {
-					if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-						util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "computesvc"), spec, fmt.Sprintf("nova service is down in compute %s", host))
+					if !slices.Contains(status.FailedChecks, fmt.Sprintf("openstack compute service is down in node %s", host)) {
+						if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+							util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "computesvc"), spec, fmt.Sprintf("nova service is down in compute %s", host))
+						}
+						status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("openstack compute service is down in node %s", host))
 					}
-					status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("openstack compute service is down in node %s", host))
 				}
 			} else {
 				wg.Add(len(hosts))
 				for _, host := range hosts {
 					go func() {
 						defer wg.Done()
-						if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-							util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "computesvc"), spec, fmt.Sprintf("nova service is now up in compute %s", host))
-						}
 						if slices.Contains(status.FailedChecks, fmt.Sprintf("openstack compute service is down in node %s", host)) {
+							if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+								util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "computesvc"), spec, fmt.Sprintf("nova service is now up in compute %s", host))
+							}
 							idx := slices.Index(status.FailedChecks, fmt.Sprintf("openstack compute service is down in node %s", host))
 							deleteElementSlice(status.FailedChecks, idx)
+							os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "computesvc"))
 						}
-						os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "computesvc"))
 					}()
 				}
 				wg.Wait()
@@ -961,24 +1039,27 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			}
 			if len(netErr) > 0 {
 				for _, host := range netErr {
-					if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-						util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "networkagent"), spec, fmt.Sprintf("network agent is down in %s", host))
+					if !slices.Contains(status.FailedChecks, fmt.Sprintf("openstack network agent is down in node %s", host)) {
+						if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+							util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "networkagent"), spec, fmt.Sprintf("network agent is down in %s", host))
+						}
+						status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("openstack network agent is down in node %s", host))
 					}
-					status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("openstack network agent is down in node %s", host))
 				}
 			} else {
 				wg.Add(len(hosts))
 				for _, host := range hosts {
 					go func() {
 						defer wg.Done()
-						if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-							util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "networkagent"), spec, fmt.Sprintf("network agent is now up in %s", host))
-						}
 						if slices.Contains(status.FailedChecks, fmt.Sprintf("openstack network agent is down in node %s", host)) {
+							if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+								util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "networkagent"), spec, fmt.Sprintf("network agent is now up in %s", host))
+							}
 							idx := slices.Index(status.FailedChecks, fmt.Sprintf("openstack network agent is down in node %s", host))
 							deleteElementSlice(status.FailedChecks, idx)
+							os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "networkagent"))
 						}
-						os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "networkagent"))
+
 					}()
 				}
 				wg.Wait()
@@ -991,19 +1072,21 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 					novaReq := returnCommand(r, fmt.Sprintf("ssh -q %s.ctlplane sudo podman ps --format {{.ID}} --filter name=nova", host))
 					err := util.GetNovaContainers(novaReq, r.RESTConfig, util.HandleCNString(host))
 					if err != nil {
-						if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-							util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "nova"), spec, fmt.Sprintf("Not all nova containers are up and running on host %s", host))
+						if !slices.Contains(status.FailedChecks, fmt.Sprintf("Not all nova containers are up and running on host %s", host)) {
+							if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+								util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "nova"), spec, fmt.Sprintf("Not all nova containers are up and running on host %s", host))
+							}
+							status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("Not all nova containers are up and running on host %s", host))
 						}
-						status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("Not all nova containers are up and running on host %s", host))
 					} else {
-						if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-							util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "nova"), spec, fmt.Sprintf("all nova containers are up and running on host %s", host))
-						}
 						if slices.Contains(status.FailedChecks, fmt.Sprintf("Not all nova containers are up and running on host %s", host)) {
+							if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+								util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "nova"), spec, fmt.Sprintf("all nova containers are up and running on host %s", host))
+							}
 							idx := slices.Index(status.FailedChecks, fmt.Sprintf("Not all nova containers are up and running on host %s", host))
 							deleteElementSlice(status.FailedChecks, idx)
+							os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "nova"))
 						}
-						os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "nova"))
 					}
 				}()
 			}
@@ -1017,19 +1100,22 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 					bond3Req := returnCommand(r, fmt.Sprintf("ssh -q %s.ctlplane sudo ovs-appctl bond/show dpdkbond3", host))
 					err := util.CheckOvsBond(bond3Req, r.RESTConfig, util.HandleCNString(host))
 					if err != nil {
-						if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-							util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-bond3"), spec, fmt.Sprintf("dpdkbond3 %s in %s", err, host))
+						if !slices.Contains(status.FailedChecks, fmt.Sprintf("dpdkbond3 %s in %s", err, host)) {
+							if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+								util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-bond3"), spec, fmt.Sprintf("dpdkbond3 %s in %s", err, host))
+							}
+							status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("dpdkbond3 %s in %s", err, host))
 						}
-						status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("dpdkbond3 %s in %s", err, host))
 					} else {
-						if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-							util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-bond3"), spec, fmt.Sprintf("dpdkbond3 issue is cleared in %s", host))
-						}
 						if slices.Contains(status.FailedChecks, fmt.Sprintf("dpdkbond3 %s in %s", err, host)) {
+							if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+								util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-bond3"), spec, fmt.Sprintf("dpdkbond3 issue is cleared in %s", host))
+							}
 							idx := slices.Index(status.FailedChecks, fmt.Sprintf("dpdkbond3 %s in %s", err, host))
 							deleteElementSlice(status.FailedChecks, idx)
+							os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-bond3"))
 						}
-						os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-bond3"))
+
 					}
 				}()
 			}
@@ -1041,19 +1127,21 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 					bond4Req := returnCommand(r, fmt.Sprintf("ssh -q %s.ctlplane sudo ovs-appctl bond/show dpdkbond4", host))
 					err := util.CheckOvsBond(bond4Req, r.RESTConfig, util.HandleCNString(host))
 					if err != nil {
-						if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-							util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-bond4"), spec, fmt.Sprintf("dpdkbond4 %s in %s", err, host))
+						if !slices.Contains(status.FailedChecks, fmt.Sprintf("dpdkbond4 %s in %s", err, host)) {
+							if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+								util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-bond4"), spec, fmt.Sprintf("dpdkbond4 %s in %s", err, host))
+							}
+							status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("dpdkbond4 %s in %s", err, host))
 						}
-						status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("dpdkbond4 %s in %s", err, host))
 					} else {
-						if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-							util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-bond4"), spec, fmt.Sprintf("dpdkbond4 is cleared in %s", host))
-						}
 						if slices.Contains(status.FailedChecks, fmt.Sprintf("dpdkbond4 %s in %s", err, host)) {
+							if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+								util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-bond4"), spec, fmt.Sprintf("dpdkbond4 is cleared in %s", host))
+							}
 							idx := slices.Index(status.FailedChecks, fmt.Sprintf("dpdkbond4 %s in %s", err, host))
 							deleteElementSlice(status.FailedChecks, idx)
+							os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-bond4"))
 						}
-						os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-bond4"))
 					}
 				}()
 			}
@@ -1067,19 +1155,21 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 					srvReq := returnCommand(r, fmt.Sprintf("ssh -q %s.ctlplane sudo systemctl status ovs-vswitchd.service", host))
 					err := util.CheckService(srvReq, r.RESTConfig, util.HandleCNString(host))
 					if err != nil {
-						if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-							util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-srv"), spec, fmt.Sprintf("%s in %s", err, host))
+						if !slices.Contains(status.FailedChecks, fmt.Sprintf("%s in %s", err, host)) {
+							if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+								util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-srv"), spec, fmt.Sprintf("%s in %s", err, host))
+							}
+							status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("%s in %s", err, host))
 						}
-						status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("%s in %s", err, host))
 					} else {
-						if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-							util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-srv"), spec, fmt.Sprintf("%s in %s", err, host))
-						}
 						if slices.Contains(status.FailedChecks, fmt.Sprintf("%s in %s", err, host)) {
+							if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+								util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-srv"), spec, fmt.Sprintf("%s in %s", err, host))
+							}
 							idx := slices.Index(status.FailedChecks, fmt.Sprintf("%s in %s", err, host))
 							deleteElementSlice(status.FailedChecks, idx)
+							os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-srv"))
 						}
-						os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-srv"))
 					}
 				}()
 			}
@@ -1093,19 +1183,21 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 					intReq := returnCommand(r, fmt.Sprintf("ssh -q %s.ctlplane sudo cat /var/log/openvswitch/ovs-vswitchd.log", host))
 					err := util.CheckLogs(intReq, r.RESTConfig, util.HandleCNString(host))
 					if err != nil {
-						if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-							util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-log"), spec, fmt.Sprintf("%s of ovs in %s", err, host))
+						if !slices.Contains(status.FailedChecks, fmt.Sprintf("%s of ovs in %s", err, host)) {
+							if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+								util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-log"), spec, fmt.Sprintf("%s of ovs in %s", err, host))
+							}
+							status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("%s of ovs in %s", err, host))
 						}
-						status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("%s of ovs in %s", err, host))
 					} else {
-						if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-							util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-log"), spec, fmt.Sprintf("%s of ovs in %s", err, host))
-						}
 						if slices.Contains(status.FailedChecks, fmt.Sprintf("%s of ovs in %s", err, host)) {
+							if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+								util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-log"), spec, fmt.Sprintf("%s of ovs in %s", err, host))
+							}
 							idx := slices.Index(status.FailedChecks, fmt.Sprintf("%s of ovs in %s", err, host))
 							deleteElementSlice(status.FailedChecks, idx)
+							os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-log"))
 						}
-						os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-log"))
 					}
 				}()
 			}
@@ -1119,19 +1211,21 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 					intReq := returnCommand(r, fmt.Sprintf("ssh -q %s.ctlplane sudo ovs-vsctl show", host))
 					err := util.CheckOvsInterfaces(intReq, r.RESTConfig, util.HandleCNString(host))
 					if err != nil {
-						if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-							util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-int"), spec, fmt.Sprintf("%s in %s", err, host))
+						if !slices.Contains(status.FailedChecks, fmt.Sprintf("%s in %s", err, host)) {
+							if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+								util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-int"), spec, fmt.Sprintf("%s in %s", err, host))
+							}
+							status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("%s in %s", err, host))
 						}
-						status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("%s in %s", err, host))
 					} else {
-						if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-							util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-int"), spec, fmt.Sprintf("%s in %s", err, host))
-						}
 						if slices.Contains(status.FailedChecks, fmt.Sprintf("%s in %s", err, host)) {
+							if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+								util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-int"), spec, fmt.Sprintf("%s in %s", err, host))
+							}
 							idx := slices.Index(status.FailedChecks, fmt.Sprintf("%s in %s", err, host))
 							deleteElementSlice(status.FailedChecks, idx)
+							os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-int"))
 						}
-						os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-int"))
 					}
 				}()
 			}
@@ -1145,19 +1239,21 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 					intReq := returnCommand(r, fmt.Sprintf("ssh -q %s.ctlplane sudo timedatectl", host))
 					err := util.CheckTime(intReq, r.RESTConfig, util.HandleCNString(host))
 					if err != nil {
-						if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-							util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "chronyd"), spec, fmt.Sprintf("%s in %s", err, host))
+						if !slices.Contains(status.FailedChecks, fmt.Sprintf("%s in %s", err, host)) {
+							if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+								util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "chronyd"), spec, fmt.Sprintf("%s in %s", err, host))
+							}
+							status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("%s in %s", err, host))
 						}
-						status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("%s in %s", err, host))
 					} else {
-						if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-							util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "chronyd"), spec, fmt.Sprintf("%s in %s", err, host))
-						}
 						if slices.Contains(status.FailedChecks, fmt.Sprintf("%s in %s", err, host)) {
+							if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+								util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "chronyd"), spec, fmt.Sprintf("%s in %s", err, host))
+							}
 							idx := slices.Index(status.FailedChecks, fmt.Sprintf("%s in %s", err, host))
 							deleteElementSlice(status.FailedChecks, idx)
+							os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "chronyd"))
 						}
-						os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "chronyd"))
 					}
 				}()
 			}
@@ -1171,19 +1267,21 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 					intReq := returnCommand(r, fmt.Sprintf("ssh -q %s.ctlplane sudo cat /var/log/containers/nova/nova-compute.log", host))
 					err := util.CheckLogs(intReq, r.RESTConfig, util.HandleCNString(host))
 					if err != nil {
-						if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-							util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "nova-log"), spec, fmt.Sprintf("%s of nova in %s", err, host))
+						if !slices.Contains(status.FailedChecks, fmt.Sprintf("%s of nova in %s", err, host)) {
+							if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+								util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "nova-log"), spec, fmt.Sprintf("%s of nova in %s", err, host))
+							}
+							status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("%s of nova in %s", err, host))
 						}
-						status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("%s of nova in %s", err, host))
 					} else {
-						if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-							util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "nova-log"), spec, fmt.Sprintf("%s of nova in %s", err, host))
-						}
 						if slices.Contains(status.FailedChecks, fmt.Sprintf("%s of nova in %s", err, host)) {
+							if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+								util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "nova-log"), spec, fmt.Sprintf("%s of nova in %s", err, host))
+							}
 							idx := slices.Index(status.FailedChecks, fmt.Sprintf("%s of nova in %s", err, host))
 							deleteElementSlice(status.FailedChecks, idx)
+							os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "nova-log"))
 						}
-						os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "nova-log"))
 					}
 				}()
 			}
@@ -1197,19 +1295,21 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 					srvReq := returnCommand(r, fmt.Sprintf("ssh -q %s.ctlplane sudo systemctl status splunk.service", host))
 					err := util.CheckService(srvReq, r.RESTConfig, util.HandleCNString(host))
 					if err != nil {
-						if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-							util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "splunk"), spec, fmt.Sprintf("%s in %s", err, host))
+						if !slices.Contains(status.FailedChecks, fmt.Sprintf("%s in %s", err, host)) {
+							if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+								util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "splunk"), spec, fmt.Sprintf("%s in %s", err, host))
+							}
+							status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("%s in %s", err, host))
 						}
-						status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("%s in %s", err, host))
 					} else {
-						if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-							util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "splunk"), spec, fmt.Sprintf("%s in %s", err, host))
-						}
 						if slices.Contains(status.FailedChecks, fmt.Sprintf("%s in %s", err, host)) {
+							if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+								util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "splunk"), spec, fmt.Sprintf("%s in %s", err, host))
+							}
 							idx := slices.Index(status.FailedChecks, fmt.Sprintf("%s in %s", err, host))
 							deleteElementSlice(status.FailedChecks, idx)
+							os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "splunk"))
 						}
-						os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "splunk"))
 					}
 				}()
 			}
