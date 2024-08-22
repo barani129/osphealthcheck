@@ -74,6 +74,7 @@ func (r *OsphealthcheckReconciler) newIssuer() (client.Object, error) {
 //+kubebuilder:rbac:groups=kubevirt.io,resources=virtualmachineinstances,verbs=get;list;watch
 //+kubebuilder:rbac:groups=kubevirt.io,namespace=openstack,resources=virtualmachineinstances,verbs=get;list;watch
 //+kubebuilder:rbac:groups=batch,resources=cronjobs,verbs=get;list;watch
+//+kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch
 //+kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch
 //+kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
 //+kubebuilder:rbac:groups="",resources=pods,verbs=get;create;list;watch
@@ -197,14 +198,25 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	if ospJob == "" {
 		ospJob = "openstack-backup"
 	}
-	cjob, err := clientset.BatchV1().CronJobs("openstack").Get(context.Background(), ospJob, v1.GetOptions{})
+	ojob, err := clientset.BatchV1().CronJobs("openstack").Get(context.Background(), ospJob, v1.GetOptions{})
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("unable to retrieve openstack cronjob, exiting")
 	}
-	if cjob.Status.Active != nil {
-		log.Log.Info("There is an active openstack-backup job running, exiting.")
+	if ojob.Status.Active != nil {
+		log.Log.Info("openstack cronjob is running, exiting.")
 		return ctrl.Result{}, nil
 	}
+	cjob, err := clientset.BatchV1().Jobs("openstack").List(context.Background(), v1.ListOptions{})
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("unable to retrieve jobs, exiting")
+	}
+	for _, job := range cjob.Items {
+		if job.Status.Active > 0 {
+			log.Log.Info("There is an active/pending job running, exiting.")
+			return ctrl.Result{}, nil
+		}
+	}
+
 	_, err = clientset.CoreV1().Namespaces().Get(context.Background(), "openstack", v1.GetOptions{})
 	if k8serrors.IsNotFound(err) {
 		return ctrl.Result{}, fmt.Errorf("openstack namespace is not found, not running on openstack ctlplane on openshift cluster")
