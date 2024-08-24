@@ -426,6 +426,13 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			}()
 		}
 		wg.Wait()
+		running, err := isRunning(clientset)
+		if err != nil {
+			log.Log.Error(err, "unable to retrieve jobs in openstack namespace")
+		}
+		if running {
+			return ctrl.Result{}, fmt.Errorf("there is an on-going/pending job in openstack, exiting")
+		}
 		// check workload status
 		log.Log.Info("Check for workload VMs with non active state")
 		vm_status := []string{"shutoff", "build", "error", "migrating", "paused", "reboot", "rescue", "resize", "unknown", "suspended", "shelved", "verify_resize"}
@@ -452,6 +459,13 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			}()
 		}
 		wg.Wait()
+		running, err = isRunning(clientset)
+		if err != nil {
+			log.Log.Error(err, "unable to retrieve jobs in openstack namespace")
+		}
+		if running {
+			return ctrl.Result{}, fmt.Errorf("there is an on-going/pending job in openstack, exiting")
+		}
 		// retrieve compute list and check connectivity on ctlplane, tenant, internal, storage
 		log.Log.Info("Check network connectivity to each compute host from a control plane VM")
 		hostReq := returnCommand(r, "openstack compute service list -c Host -f value")
@@ -511,6 +525,13 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				}
 			}
 		}
+		running, err = isRunning(clientset)
+		if err != nil {
+			log.Log.Error(err, "unable to retrieve jobs in openstack namespace")
+		}
+		if running {
+			return ctrl.Result{}, fmt.Errorf("there is an on-going/pending job in openstack, exiting")
+		}
 		// check nova containers
 		wg.Add(len(hosts))
 		for _, host := range hosts {
@@ -529,6 +550,13 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			}()
 		}
 		wg.Wait()
+		running, err = isRunning(clientset)
+		if err != nil {
+			log.Log.Error(err, "unable to retrieve jobs in openstack namespace")
+		}
+		if running {
+			return ctrl.Result{}, fmt.Errorf("there is an on-going/pending job in openstack, exiting")
+		}
 		// check dpdk bond status
 		log.Log.Info("Check DPDK bond status on each host")
 		wg.Add(len(hosts))
@@ -548,6 +576,13 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			}()
 		}
 		wg.Wait()
+		running, err = isRunning(clientset)
+		if err != nil {
+			log.Log.Error(err, "unable to retrieve jobs in openstack namespace")
+		}
+		if running {
+			return ctrl.Result{}, fmt.Errorf("there is an on-going/pending job in openstack, exiting")
+		}
 		wg.Add(len(hosts))
 		for _, host := range hosts {
 			go func() {
@@ -565,6 +600,13 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			}()
 		}
 		wg.Wait()
+		running, err = isRunning(clientset)
+		if err != nil {
+			log.Log.Error(err, "unable to retrieve jobs in openstack namespace")
+		}
+		if running {
+			return ctrl.Result{}, fmt.Errorf("there is an on-going/pending job in openstack, exiting")
+		}
 		// ovs service
 		log.Log.Info("Check OVS service on each host")
 		wg.Add(len(hosts))
@@ -584,6 +626,13 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			}()
 		}
 		wg.Wait()
+		running, err = isRunning(clientset)
+		if err != nil {
+			log.Log.Error(err, "unable to retrieve jobs in openstack namespace")
+		}
+		if running {
+			return ctrl.Result{}, fmt.Errorf("there is an on-going/pending job in openstack, exiting")
+		}
 		// ovs logs for bug/warning/error
 		log.Log.Info("Check OVS logs for error and warning on each host")
 		wg.Add(len(hosts))
@@ -603,6 +652,13 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			}()
 		}
 		wg.Wait()
+		running, err = isRunning(clientset)
+		if err != nil {
+			log.Log.Error(err, "unable to retrieve jobs in openstack namespace")
+		}
+		if running {
+			return ctrl.Result{}, fmt.Errorf("there is an on-going/pending job in openstack, exiting")
+		}
 		// ovs-vsctl show o/p
 		log.Log.Info("Check ovs-vsctl output")
 		wg.Add(len(hosts))
@@ -622,6 +678,13 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			}()
 		}
 		wg.Wait()
+		running, err = isRunning(clientset)
+		if err != nil {
+			log.Log.Error(err, "unable to retrieve jobs in openstack namespace")
+		}
+		if running {
+			return ctrl.Result{}, fmt.Errorf("there is an on-going/pending job in openstack, exiting")
+		}
 		// time sync
 		log.Log.Info("Check time sync on each host")
 		wg.Add(len(hosts))
@@ -641,6 +704,13 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			}()
 		}
 		wg.Wait()
+		running, err = isRunning(clientset)
+		if err != nil {
+			log.Log.Error(err, "unable to retrieve jobs in openstack namespace")
+		}
+		if running {
+			return ctrl.Result{}, fmt.Errorf("there is an on-going/pending job in openstack, exiting")
+		}
 		// nova logs
 		log.Log.Info("Check nova logs for errors/warning on each host")
 		wg.Add(len(hosts))
@@ -660,6 +730,13 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			}()
 		}
 		wg.Wait()
+		running, err = isRunning(clientset)
+		if err != nil {
+			log.Log.Error(err, "unable to retrieve jobs in openstack namespace")
+		}
+		if running {
+			return ctrl.Result{}, fmt.Errorf("there is an on-going/pending job in openstack, exiting")
+		}
 		// splunk
 		log.Log.Info("Check Splunk service on each host")
 		wg.Add(len(hosts))
@@ -910,6 +987,13 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				}()
 			}
 			wg.Wait()
+			running, err := isRunning(clientset)
+			if err != nil {
+				log.Log.Error(err, "unable to retrieve jobs in openstack namespace")
+			}
+			if running {
+				return ctrl.Result{}, fmt.Errorf("there is an on-going/pending job in openstack, exiting")
+			}
 			// check workload status
 			log.Log.Info("Check for workload VMs with non active state")
 			var allFailedVms []string
@@ -938,6 +1022,13 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				}()
 			}
 			wg.Wait()
+			running, err = isRunning(clientset)
+			if err != nil {
+				log.Log.Error(err, "unable to retrieve jobs in openstack namespace")
+			}
+			if running {
+				return ctrl.Result{}, fmt.Errorf("there is an on-going/pending job in openstack, exiting")
+			}
 			if len(allFailedVms) > 0 {
 				wg.Add(len(allFailedVms))
 				for _, vm := range allFailedVms {
@@ -962,6 +1053,13 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 					}()
 				}
 				wg.Wait()
+			}
+			running, err = isRunning(clientset)
+			if err != nil {
+				log.Log.Error(err, "unable to retrieve jobs in openstack namespace")
+			}
+			if running {
+				return ctrl.Result{}, fmt.Errorf("there is an on-going/pending job in openstack, exiting")
 			}
 			// retrieve compute list and check connectivity on ctlplane, tenant, internal, storage
 			log.Log.Info("Check network connectivity to each compute host from a control plane VM")
@@ -1064,6 +1162,13 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				}
 				wg.Wait()
 			}
+			running, err = isRunning(clientset)
+			if err != nil {
+				log.Log.Error(err, "unable to retrieve jobs in openstack namespace")
+			}
+			if running {
+				return ctrl.Result{}, fmt.Errorf("there is an on-going/pending job in openstack, exiting")
+			}
 			// check nova containers
 			wg.Add(len(hosts))
 			for _, host := range hosts {
@@ -1091,6 +1196,13 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				}()
 			}
 			wg.Wait()
+			running, err = isRunning(clientset)
+			if err != nil {
+				log.Log.Error(err, "unable to retrieve jobs in openstack namespace")
+			}
+			if running {
+				return ctrl.Result{}, fmt.Errorf("there is an on-going/pending job in openstack, exiting")
+			}
 			// check dpdk bond status
 			log.Log.Info("Check DPDK bond status on each host")
 			wg.Add(len(hosts))
@@ -1120,6 +1232,13 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				}()
 			}
 			wg.Wait()
+			running, err = isRunning(clientset)
+			if err != nil {
+				log.Log.Error(err, "unable to retrieve jobs in openstack namespace")
+			}
+			if running {
+				return ctrl.Result{}, fmt.Errorf("there is an on-going/pending job in openstack, exiting")
+			}
 			wg.Add(len(hosts))
 			for _, host := range hosts {
 				go func() {
@@ -1146,6 +1265,13 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				}()
 			}
 			wg.Wait()
+			running, err = isRunning(clientset)
+			if err != nil {
+				log.Log.Error(err, "unable to retrieve jobs in openstack namespace")
+			}
+			if running {
+				return ctrl.Result{}, fmt.Errorf("there is an on-going/pending job in openstack, exiting")
+			}
 			// ovs service
 			log.Log.Info("Check OVS service on each host")
 			wg.Add(len(hosts))
@@ -1174,6 +1300,13 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				}()
 			}
 			wg.Wait()
+			running, err = isRunning(clientset)
+			if err != nil {
+				log.Log.Error(err, "unable to retrieve jobs in openstack namespace")
+			}
+			if running {
+				return ctrl.Result{}, fmt.Errorf("there is an on-going/pending job in openstack, exiting")
+			}
 			// ovs logs for bug/warning/error
 			log.Log.Info("Check OVS logs for error and warning on each host")
 			wg.Add(len(hosts))
@@ -1202,6 +1335,13 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				}()
 			}
 			wg.Wait()
+			running, err = isRunning(clientset)
+			if err != nil {
+				log.Log.Error(err, "unable to retrieve jobs in openstack namespace")
+			}
+			if running {
+				return ctrl.Result{}, fmt.Errorf("there is an on-going/pending job in openstack, exiting")
+			}
 			// ovs-vsctl show o/p
 			log.Log.Info("Check ovs-vsctl output")
 			wg.Add(len(hosts))
@@ -1230,6 +1370,13 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				}()
 			}
 			wg.Wait()
+			running, err = isRunning(clientset)
+			if err != nil {
+				log.Log.Error(err, "unable to retrieve jobs in openstack namespace")
+			}
+			if running {
+				return ctrl.Result{}, fmt.Errorf("there is an on-going/pending job in openstack, exiting")
+			}
 			// time sync
 			log.Log.Info("Check time sync on each host")
 			wg.Add(len(hosts))
@@ -1258,6 +1405,13 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				}()
 			}
 			wg.Wait()
+			running, err = isRunning(clientset)
+			if err != nil {
+				log.Log.Error(err, "unable to retrieve jobs in openstack namespace")
+			}
+			if running {
+				return ctrl.Result{}, fmt.Errorf("there is an on-going/pending job in openstack, exiting")
+			}
 			// nova logs
 			log.Log.Info("Check nova logs for errors/warning on each host")
 			wg.Add(len(hosts))
@@ -1286,6 +1440,13 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				}()
 			}
 			wg.Wait()
+			running, err = isRunning(clientset)
+			if err != nil {
+				log.Log.Error(err, "unable to retrieve jobs in openstack namespace")
+			}
+			if running {
+				return ctrl.Result{}, fmt.Errorf("there is an on-going/pending job in openstack, exiting")
+			}
 			// splunk
 			log.Log.Info("Check Splunk service on each host")
 			wg.Add(len(hosts))
@@ -1365,4 +1526,17 @@ func generateRandom(sli []string) string {
 	}
 	idx := rand.Intn(len(sli))
 	return sli[idx]
+}
+
+func isRunning(clientset *kubernetes.Clientset) (bool, error) {
+	job, err := clientset.BatchV1().Jobs("openstack").List(context.Background(), v1.ListOptions{})
+	if err != nil {
+		return false, err
+	}
+	for _, j := range job.Items {
+		if j.Status.Active > 0 {
+			return true, err
+		}
+	}
+	return false, nil
 }
