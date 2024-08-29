@@ -1634,7 +1634,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			wg.Wait()
 		}
 	}
-	if status.FailedChecks != nil && len(status.FailedChecks) < 1 {
+	if len(status.FailedChecks) < 1 {
 		status.Healthy = true
 		now := v1.Now()
 		status.LastSuccessfulRunTime = &now
