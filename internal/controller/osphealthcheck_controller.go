@@ -194,18 +194,6 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("unable to get in cluster configuration due to error %s", err)
 	}
-	ospJob := os.Getenv("ospbackup-job")
-	if ospJob == "" {
-		ospJob = "openstack-backup"
-	}
-	ojob, err := clientset.BatchV1().CronJobs("openstack").Get(context.Background(), ospJob, v1.GetOptions{})
-	if err != nil {
-		return ctrl.Result{}, fmt.Errorf("unable to retrieve openstack cronjob, exiting")
-	}
-	if ojob.Status.Active != nil {
-		log.Log.Info("openstack cronjob is running, exiting.")
-		return ctrl.Result{}, nil
-	}
 	cjob, err := clientset.BatchV1().Jobs("openstack").List(context.Background(), v1.ListOptions{})
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("unable to retrieve jobs, exiting")
@@ -216,7 +204,6 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			return ctrl.Result{}, nil
 		}
 	}
-
 	_, err = clientset.CoreV1().Namespaces().Get(context.Background(), "openstack", v1.GetOptions{})
 	if k8serrors.IsNotFound(err) {
 		return ctrl.Result{}, fmt.Errorf("openstack namespace is not found, not running on openstack ctlplane on openshift cluster")
@@ -359,7 +346,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		if stonith {
 			if !slices.Contains(status.FailedChecks, "stonith is disabled, please ignore if it is intended") {
 				if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-					util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", "checkstonith", "pcs"), spec, "pcs stonith is disabled")
+					util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", "checkstonith", "pcs"), spec, "pcs stonith is disabled, please ignore if it is intended.")
 				}
 				status.FailedChecks = append(status.FailedChecks, "stonith is disabled, please ignore if it is intended")
 			}
@@ -635,23 +622,48 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		}
 		// ovs logs for bug/warning/error
 		log.Log.Info("Check OVS logs for error and warning on each host")
+		var ovsaffectedNodes []string
 		wg.Add(len(hosts))
 		for _, host := range hosts {
 			go func() {
 				defer wg.Done()
 				intReq := returnCommand(r, fmt.Sprintf("ssh -q %s.ctlplane sudo cat /var/log/openvswitch/ovs-vswitchd.log", host))
-				err := util.CheckLogs(intReq, r.RESTConfig, util.HandleCNString(host))
+				err := util.CheckOvsLogs(intReq, r.RESTConfig, util.HandleCNString(host))
 				if err != nil {
+					ovsaffectedNodes = append(ovsaffectedNodes, host)
 					if !slices.Contains(status.FailedChecks, fmt.Sprintf("%s of ovs in %s", err, host)) {
-						if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-							util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-log"), spec, fmt.Sprintf("%s of ovs in %s", err, host))
-						}
 						status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("%s of ovs in %s", err, host))
 					}
 				}
 			}()
 		}
 		wg.Wait()
+		if len(ovsaffectedNodes) > 0 {
+			wg.Add(len(ovsaffectedNodes))
+			for _, host := range ovsaffectedNodes {
+				go func() {
+					defer wg.Done()
+					if _, err := os.Stat(fmt.Sprintf("/home/golanguser/.%s-%s.txt", host, "ovs-log")); os.IsNotExist(err) {
+						_, err = os.Create(fmt.Sprintf("/home/golanguser/.%s-%s.txt", host, "ovs-log"))
+						if err != nil {
+							log.Log.Error(err, fmt.Sprintf("unable to create ovs error log file for host %s", host))
+						}
+					}
+				}()
+			}
+			wg.Wait()
+			if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+				slices.Sort(ovsaffectedNodes)
+				var ovss string
+				for _, host := range ovsaffectedNodes {
+					if strings.Contains(host, "-") {
+						_, af, _ := strings.Cut(host, "-")
+						ovss += af
+					}
+				}
+				util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/.%s-%s.txt", ovss, "ovslog"), spec, fmt.Sprintf("observing errors/warnings in ovs log file of hosts %v", ovsaffectedNodes))
+			}
+		}
 		running, err = isRunning(clientset)
 		if err != nil {
 			log.Log.Error(err, "unable to retrieve jobs in openstack namespace")
@@ -713,6 +725,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		}
 		// nova logs
 		log.Log.Info("Check nova logs for errors/warning on each host")
+		var novaaffectedNodes []string
 		wg.Add(len(hosts))
 		for _, host := range hosts {
 			go func() {
@@ -720,16 +733,40 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				intReq := returnCommand(r, fmt.Sprintf("ssh -q %s.ctlplane sudo cat /var/log/containers/nova/nova-compute.log", host))
 				err := util.CheckLogs(intReq, r.RESTConfig, util.HandleCNString(host))
 				if err != nil {
+					novaaffectedNodes = append(novaaffectedNodes, host)
 					if !slices.Contains(status.FailedChecks, fmt.Sprintf("%s of nova in %s", err, host)) {
-						if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-							util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "nova-log"), spec, fmt.Sprintf("%s of nova in %s", err, host))
-						}
 						status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("%s of nova in %s", err, host))
 					}
 				}
 			}()
 		}
 		wg.Wait()
+		if len(novaaffectedNodes) > 0 {
+			wg.Add(len(novaaffectedNodes))
+			for _, host := range novaaffectedNodes {
+				go func() {
+					defer wg.Done()
+					if _, err := os.Stat(fmt.Sprintf("/home/golanguser/.%s-%s.txt", host, "nova-log")); os.IsNotExist(err) {
+						_, err = os.Create(fmt.Sprintf("/home/golanguser/.%s-%s.txt", host, "nova-log"))
+						if err != nil {
+							log.Log.Error(err, fmt.Sprintf("unable to create nova error log file for host %s", host))
+						}
+					}
+				}()
+			}
+			wg.Wait()
+			if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+				slices.Sort(novaaffectedNodes)
+				var novas string
+				for _, host := range novaaffectedNodes {
+					if strings.Contains(host, "-") {
+						_, af, _ := strings.Cut(host, "-")
+						novas += af
+					}
+				}
+				util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/.%s-%s.txt", novas, "novalog"), spec, fmt.Sprintf("observing errors/warning in nova-compute log file of hosts %v", novaaffectedNodes))
+			}
+		}
 		running, err = isRunning(clientset)
 		if err != nil {
 			log.Log.Error(err, "unable to retrieve jobs in openstack namespace")
@@ -884,7 +921,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			if stonith {
 				if !slices.Contains(status.FailedChecks, "stonith is disabled, please ignore if it is intended") {
 					if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-						util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", "checkstonith", "pcs"), spec, "pcs stonith is disabled")
+						util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", "checkstonith", "pcs"), spec, "pcs stonith is disabled, , please ignore if it is intended.")
 					}
 					status.FailedChecks = append(status.FailedChecks, "stonith is disabled, please ignore if it is intended")
 				}
@@ -1309,32 +1346,93 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			}
 			// ovs logs for bug/warning/error
 			log.Log.Info("Check OVS logs for error and warning on each host")
+			var ovsaffectedNodes []string
 			wg.Add(len(hosts))
 			for _, host := range hosts {
 				go func() {
 					defer wg.Done()
 					intReq := returnCommand(r, fmt.Sprintf("ssh -q %s.ctlplane sudo cat /var/log/openvswitch/ovs-vswitchd.log", host))
-					err := util.CheckLogs(intReq, r.RESTConfig, util.HandleCNString(host))
+					err := util.CheckOvsLogs(intReq, r.RESTConfig, util.HandleCNString(host))
 					if err != nil {
+						ovsaffectedNodes = append(ovsaffectedNodes, host)
 						if !slices.Contains(status.FailedChecks, fmt.Sprintf("%s of ovs in %s", err, host)) {
-							if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-								util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-log"), spec, fmt.Sprintf("%s of ovs in %s", err, host))
-							}
 							status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("%s of ovs in %s", err, host))
 						}
 					} else {
 						if slices.Contains(status.FailedChecks, fmt.Sprintf("%s of ovs in %s", err, host)) {
-							if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-								util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-log"), spec, fmt.Sprintf("%s of ovs in %s", err, host))
-							}
 							idx := slices.Index(status.FailedChecks, fmt.Sprintf("%s of ovs in %s", err, host))
 							deleteElementSlice(status.FailedChecks, idx)
-							os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-log"))
 						}
 					}
 				}()
 			}
 			wg.Wait()
+			var ovss string
+			if len(ovsaffectedNodes) > 0 {
+				wg.Add(len(hosts))
+				for _, host := range hosts {
+					go func() {
+						defer wg.Done()
+						if !slices.Contains(ovsaffectedNodes, host) {
+							if _, err := os.Stat(fmt.Sprintf("/home/golanguser/.%s-%s.txt", host, "ovs-log")); os.IsNotExist(err) {
+								//
+							} else {
+								err := os.WriteFile(fmt.Sprintf("/home/golanguser/.%s-%s.txt", host, "ovs-log"), []byte("sent"), 0666)
+								if err != nil {
+									log.Log.Error(err, fmt.Sprintf("unable to write email sent to ovs log file of host %s", host))
+								}
+								if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+									util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/.%s-%s.txt", host, "ovs-log"), spec, fmt.Sprintf("No longer observing errors/warnings in ovs log file of host %s", host))
+								}
+								os.Remove(fmt.Sprintf("/home/golanguser/.%s-%s.txt", host, "ovs-log"))
+							}
+						}
+					}()
+				}
+				wg.Wait()
+				wg.Add(len(ovsaffectedNodes))
+				for _, ohost := range ovsaffectedNodes {
+					go func() {
+						defer wg.Done()
+						if _, err := os.Stat(fmt.Sprintf("/home/golanguser/.%s-%s.txt", ohost, "ovs-log")); os.IsNotExist(err) {
+							_, err = os.Create(fmt.Sprintf("/home/golanguser/.%s-%s.txt", ohost, "ovs-log"))
+							if err != nil {
+								log.Log.Error(err, fmt.Sprintf("unable to create ovs error log file for host %s", ohost))
+							}
+						}
+					}()
+				}
+				wg.Wait()
+				if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+					slices.Sort(ovsaffectedNodes)
+					for _, host := range ovsaffectedNodes {
+						if strings.Contains(host, "-") {
+							_, af, _ := strings.Cut(host, "-")
+							ovss += af
+						}
+					}
+					util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/.%s-%s.txt", ovss, "ovslog"), spec, fmt.Sprintf("observing errors/warnings in ovs log file of hosts %v", ovsaffectedNodes))
+				}
+			} else {
+				dir, err := os.Open("/home/golanguser/")
+				if err != nil {
+					log.Log.Error(err, "unable to open directory /home/golanguser")
+				}
+				files, err := os.ReadDir(dir.Name())
+				if err != nil {
+					log.Log.Error(err, "unable to read directory /home/golanguser")
+				}
+				var ovsfileName string
+				for _, f := range files {
+					if strings.Contains(f.Name(), "ovslog") {
+						ovsfileName = f.Name()
+					}
+				}
+				if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+					util.SendEmailRecoveredAlert(env, ovsfileName, spec, fmt.Sprintf("observing errors/warnings in ovs log file of hosts %v", ovsaffectedNodes))
+				}
+				os.Remove(ovsfileName)
+			}
 			running, err = isRunning(clientset)
 			if err != nil {
 				log.Log.Error(err, "unable to retrieve jobs in openstack namespace")
@@ -1414,6 +1512,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			}
 			// nova logs
 			log.Log.Info("Check nova logs for errors/warning on each host")
+			var novaaffectedNodes []string
 			wg.Add(len(hosts))
 			for _, host := range hosts {
 				go func() {
@@ -1421,25 +1520,83 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 					intReq := returnCommand(r, fmt.Sprintf("ssh -q %s.ctlplane sudo cat /var/log/containers/nova/nova-compute.log", host))
 					err := util.CheckLogs(intReq, r.RESTConfig, util.HandleCNString(host))
 					if err != nil {
+						novaaffectedNodes = append(novaaffectedNodes, host)
 						if !slices.Contains(status.FailedChecks, fmt.Sprintf("%s of nova in %s", err, host)) {
-							if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-								util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "nova-log"), spec, fmt.Sprintf("%s of nova in %s", err, host))
-							}
 							status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("%s of nova in %s", err, host))
 						}
 					} else {
 						if slices.Contains(status.FailedChecks, fmt.Sprintf("%s of nova in %s", err, host)) {
-							if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-								util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "nova-log"), spec, fmt.Sprintf("%s of nova in %s", err, host))
-							}
 							idx := slices.Index(status.FailedChecks, fmt.Sprintf("%s of nova in %s", err, host))
 							deleteElementSlice(status.FailedChecks, idx)
-							os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "nova-log"))
 						}
 					}
 				}()
 			}
 			wg.Wait()
+			var novas string
+			if len(novaaffectedNodes) > 0 {
+				wg.Add(len(hosts))
+				for _, host := range hosts {
+					go func() {
+						defer wg.Done()
+						if !slices.Contains(ovsaffectedNodes, host) {
+							if _, err := os.Stat(fmt.Sprintf("/home/golanguser/.%s-%s.txt", host, "nova-log")); os.IsNotExist(err) {
+								//
+							} else {
+								err := os.WriteFile(fmt.Sprintf("/home/golanguser/.%s-%s.txt", host, "nova-log"), []byte("sent"), 0666)
+								if err != nil {
+									log.Log.Error(err, fmt.Sprintf("unable to write email sent to ovs log file of host %s", host))
+								}
+								if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+									util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/.%s-%s.txt", host, "nova-log"), spec, fmt.Sprintf("No longer observing errors/warnings in nova log file of host %s", host))
+								}
+								os.Remove(fmt.Sprintf("/home/golanguser/.%s-%s.txt", host, "nova-log"))
+							}
+						}
+					}()
+				}
+				wg.Wait()
+				wg.Add(len(novaaffectedNodes))
+				for _, nhost := range novaaffectedNodes {
+					go func() {
+						defer wg.Done()
+						if _, err := os.Stat(fmt.Sprintf("/home/golanguser/.%s-%s.txt", nhost, "nova-log")); os.IsNotExist(err) {
+							_, err = os.Create(fmt.Sprintf("/home/golanguser/.%s-%s.txt", nhost, "nova-log"))
+							if err != nil {
+								log.Log.Error(err, fmt.Sprintf("unable to create nova error log file for host %s", nhost))
+							}
+						}
+					}()
+				}
+				wg.Wait()
+				if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+					slices.Sort(novaaffectedNodes)
+					for _, host := range novaaffectedNodes {
+						if strings.Contains(host, "-") {
+							_, af, _ := strings.Cut(host, "-")
+							novas += af
+						}
+					}
+					util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/.%s-%s.txt", novas, "novalog"), spec, fmt.Sprintf("observing errors/warnings in nova log file of hosts %v", novaaffectedNodes))
+				}
+			} else {
+				dir, err := os.Open("/home/golanguser/")
+				if err != nil {
+					log.Log.Error(err, "unable to open directory /home/golanguser")
+				}
+				files, err := os.ReadDir(dir.Name())
+				if err != nil {
+					log.Log.Error(err, "unable to read directory /home/golanguser")
+				}
+				var novafileName string
+				for _, f := range files {
+					if strings.Contains(f.Name(), "novalog") {
+						novafileName = f.Name()
+					}
+				}
+				util.SendEmailRecoveredAlert(env, novafileName, spec, "No longer observing errors/warnings in nova log file of hosts")
+				os.Remove(novafileName)
+			}
 			running, err = isRunning(clientset)
 			if err != nil {
 				log.Log.Error(err, "unable to retrieve jobs in openstack namespace")

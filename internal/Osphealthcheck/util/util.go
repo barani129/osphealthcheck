@@ -388,7 +388,7 @@ func GetNovaContainers(rest *rest.Request, config *rest.Config, host string) err
 		}
 	}
 	if len(nova) < 4 {
-		return fmt.Errorf("found only %d nova containers", len(sliceData))
+		return fmt.Errorf("found only %d nova containers", len(nova))
 	}
 	return nil
 }
@@ -422,6 +422,17 @@ func CheckOvsInterfaces(rest *rest.Request, config *rest.Config, host string) er
 	}
 	if strings.Contains(string(data), "error") {
 		return fmt.Errorf("observing errors in ovs-vsctl show output")
+	}
+	return nil
+}
+
+func CheckOvsLogs(rest *rest.Request, config *rest.Config, host string) error {
+	data, err := ExecuteCommand(rest, config, host)
+	if err != nil {
+		return err
+	}
+	if strings.Contains(string(data), "ERROR") {
+		return fmt.Errorf("observing errors in log file")
 	}
 	return nil
 }
