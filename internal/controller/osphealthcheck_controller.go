@@ -435,11 +435,11 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				if len(failedVm) > 0 {
 					for _, vm := range failedVm {
 						vmData := strings.SplitN(vm, ":", 2)
-						if !slices.Contains(status.FailedChecks, fmt.Sprintf("found VM %s with status %s in host %s", vmData[0], vmstatus, vmData[1])) {
+						if !slices.Contains(status.FailedChecks, fmt.Sprintf("found VM %s with non-running status on host %s", vmData[0], vmData[1])) {
 							if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
 								util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", vmData[0], vmData[1]), spec, fmt.Sprintf("VM %s has status %s on host %s", vmData[0], vmstatus, vmData[1]))
 							}
-							status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("found VM %s with status %s in host %s", vmData[0], vmstatus, vmData[1]))
+							status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("found VM %s with non-running status on host %s", vmData[0], vmData[1]))
 						}
 					}
 				}
@@ -1052,7 +1052,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 								if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
 									util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", vmData[0], vmData[1]), spec, fmt.Sprintf("VM %s has status %s on host %s", vmData[0], vmstatus, vmData[1]))
 								}
-								status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("found VM %s with non-running status in host %s", vmData[0], vmData[1]))
+								status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("found VM %s with non-running status on host %s", vmData[0], vmData[1]))
 							}
 						}
 					}
@@ -1513,6 +1513,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			// nova logs
 			log.Log.Info("Check nova logs for errors/warning on each host")
 			var novaaffectedNodes []string
+			novaaffectedNodes = nil
 			wg.Add(len(hosts))
 			for _, host := range hosts {
 				go func() {
@@ -1539,7 +1540,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				for _, host := range hosts {
 					go func() {
 						defer wg.Done()
-						if !slices.Contains(ovsaffectedNodes, host) {
+						if !slices.Contains(novaaffectedNodes, host) {
 							if _, err := os.Stat(fmt.Sprintf("/home/golanguser/.%s-%s.txt", host, "nova-log")); os.IsNotExist(err) {
 								//
 							} else {
