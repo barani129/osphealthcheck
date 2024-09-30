@@ -204,6 +204,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			return ctrl.Result{}, nil
 		}
 	}
+
 	_, err = clientset.CoreV1().Namespaces().Get(context.Background(), "openstack", v1.GetOptions{})
 	if k8serrors.IsNotFound(err) {
 		return ctrl.Result{}, fmt.Errorf("openstack namespace is not found, not running on openstack ctlplane on openshift cluster")
@@ -285,6 +286,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				}
 			}
 		}
+
 		log.Log.Info("Checking failed migrations in Openstack namespace")
 		mig, err := util.CheckFailedMigrations(clientset)
 		if err != nil {
@@ -395,7 +397,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			wg.Wait()
 		}
 		// check multiple galera containers
-		log.Log.Info("Check for multiple containers in each control plane VM")
+		log.Log.Info("Check for multiple galera containers in each control plane VM")
 		wg.Add(len(activeVM))
 		for _, vm := range activeVM {
 			go func() {
@@ -435,11 +437,11 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				if len(failedVm) > 0 {
 					for _, vm := range failedVm {
 						vmData := strings.SplitN(vm, ":", 2)
-						if !slices.Contains(status.FailedChecks, fmt.Sprintf("found VM %s with status %s in host %s", vmData[0], vmstatus, vmData[1])) {
+						if !slices.Contains(status.FailedChecks, fmt.Sprintf("found VM %s with non-running status on host %s", vmData[0], vmData[1])) {
 							if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
 								util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", vmData[0], vmData[1]), spec, fmt.Sprintf("VM %s has status %s on host %s", vmData[0], vmstatus, vmData[1]))
 							}
-							status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("found VM %s with status %s in host %s", vmData[0], vmstatus, vmData[1]))
+							status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("found VM %s with non-running status on host %s", vmData[0], vmData[1]))
 						}
 					}
 				}
@@ -603,11 +605,11 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				srvReq := returnCommand(r, fmt.Sprintf("ssh -q %s.ctlplane sudo systemctl status ovs-vswitchd.service", host))
 				err := util.CheckService(srvReq, r.RESTConfig, util.HandleCNString(host))
 				if err != nil {
-					if !slices.Contains(status.FailedChecks, fmt.Sprintf("%s in %s", err, host)) {
+					if !slices.Contains(status.FailedChecks, fmt.Sprintf("ovs-service issue in %s", host)) {
 						if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-							util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-srv"), spec, fmt.Sprintf("%s in %s", err, host))
+							util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-srv"), spec, fmt.Sprintf("ovs-service issue in %s", host))
 						}
-						status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("%s in %s", err, host))
+						status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("ovs-service issue in %s", host))
 					}
 				}
 			}()
@@ -680,11 +682,11 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				intReq := returnCommand(r, fmt.Sprintf("ssh -q %s.ctlplane sudo ovs-vsctl show", host))
 				err := util.CheckOvsInterfaces(intReq, r.RESTConfig, util.HandleCNString(host))
 				if err != nil {
-					if !slices.Contains(status.FailedChecks, fmt.Sprintf("%s in %s", err, host)) {
+					if !slices.Contains(status.FailedChecks, fmt.Sprintf("ovs-vsctl show error in %s", host)) {
 						if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-							util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-int"), spec, fmt.Sprintf("%s in %s", err, host))
+							util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-int"), spec, fmt.Sprintf("ovs-vsctl show error in %s", host))
 						}
-						status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("%s in %s", err, host))
+						status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("ovs-vsctl show error in %s", host))
 					}
 				}
 			}()
@@ -706,11 +708,11 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				intReq := returnCommand(r, fmt.Sprintf("ssh -q %s.ctlplane sudo timedatectl", host))
 				err := util.CheckTime(intReq, r.RESTConfig, util.HandleCNString(host))
 				if err != nil {
-					if !slices.Contains(status.FailedChecks, fmt.Sprintf("%s in %s", err, host)) {
+					if !slices.Contains(status.FailedChecks, fmt.Sprintf("timesync error in %s", host)) {
 						if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-							util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "chronyd"), spec, fmt.Sprintf("%s in %s", err, host))
+							util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "chronyd"), spec, fmt.Sprintf("timesync error  in %s", host))
 						}
-						status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("%s in %s", err, host))
+						status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("timesync error  in %s", host))
 					}
 				}
 			}()
@@ -764,7 +766,58 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 						novas += af
 					}
 				}
-				util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/.%s-%s.txt", novas, "novalog"), spec, fmt.Sprintf("observing errors/warning in nova-compute log file of hosts %v", novaaffectedNodes))
+				util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/.%s-%s.txt", novas, "novalog"), spec, fmt.Sprintf("observing errors/warning in nova log file of hosts %v", novaaffectedNodes))
+			}
+		}
+		running, err = isRunning(clientset)
+		if err != nil {
+			log.Log.Error(err, "unable to retrieve jobs in openstack namespace")
+		}
+		if running {
+			return ctrl.Result{}, fmt.Errorf("there is an on-going/pending job in openstack, exiting")
+		}
+		// stale allocations
+		log.Log.Info("Check nova logs for stale resource allocations on each host")
+		var novaStaleNodes []string
+		wg.Add(len(hosts))
+		for _, host := range hosts {
+			go func() {
+				defer wg.Done()
+				intReq := returnCommand(r, fmt.Sprintf("ssh -q %s.ctlplane sudo cat /var/log/containers/nova/nova-compute.log", host))
+				err := util.CheckStaleResources(intReq, r.RESTConfig, util.HandleCNString(host))
+				if err != nil {
+					novaStaleNodes = append(novaStaleNodes, host)
+					if !slices.Contains(status.FailedChecks, fmt.Sprintf("%s in %s", err, host)) {
+						status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("%s in %s", err, host))
+					}
+				}
+			}()
+		}
+		wg.Wait()
+		if len(novaStaleNodes) > 0 {
+			wg.Add(len(novaStaleNodes))
+			for _, host := range novaStaleNodes {
+				go func() {
+					defer wg.Done()
+					if _, err := os.Stat(fmt.Sprintf("/home/golanguser/.%s-%s.txt", host, "nova-stale")); os.IsNotExist(err) {
+						_, err = os.Create(fmt.Sprintf("/home/golanguser/.%s-%s.txt", host, "nova-stale"))
+						if err != nil {
+							log.Log.Error(err, fmt.Sprintf("unable to create nova stale error log file for host %s", host))
+						}
+					}
+				}()
+			}
+			wg.Wait()
+			if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+				slices.Sort(novaStaleNodes)
+				var novas string
+				for _, host := range novaStaleNodes {
+					if strings.Contains(host, "-") {
+						_, af, _ := strings.Cut(host, "-")
+						novas += af
+					}
+				}
+				util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/.%s-%s.txt", novas, "novastale"), spec, fmt.Sprintf("found stale resource allocations in nova log file of hosts %v", novaaffectedNodes))
 			}
 		}
 		running, err = isRunning(clientset)
@@ -783,11 +836,11 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				srvReq := returnCommand(r, fmt.Sprintf("ssh -q %s.ctlplane sudo systemctl status splunk.service", host))
 				err := util.CheckService(srvReq, r.RESTConfig, util.HandleCNString(host))
 				if err != nil {
-					if !slices.Contains(status.FailedChecks, fmt.Sprintf("%s in %s", err, host)) {
+					if !slices.Contains(status.FailedChecks, fmt.Sprintf("splunk service error in %s", host)) {
 						if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-							util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "splunk"), spec, fmt.Sprintf("%s in %s", err, host))
+							util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "splunk"), spec, fmt.Sprintf("splunk service error in %s", host))
 						}
-						status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("%s in %s", err, host))
+						status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("splunk service error in %s", host))
 					}
 				}
 			}()
@@ -819,7 +872,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 							util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", vm, "non-active"), spec, fmt.Sprintf("found a failed or stopped vm %s", vm))
 						}
 						idx := slices.Index(status.FailedChecks, fmt.Sprintf("found a failed or stopped vm %s", vm))
-						deleteElementSlice(status.FailedChecks, idx)
+						status.FailedChecks = deleteElementSlice(status.FailedChecks, idx)
 						os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", vm, "non-active"))
 					}
 				}
@@ -842,7 +895,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 						util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", "error", "failed-ongoing-mig"), spec, fmt.Sprintf("VM %v is posting successful migration state", mig))
 					}
 					idx := slices.Index(status.FailedChecks, "found a failed or on-going migration")
-					deleteElementSlice(status.FailedChecks, idx)
+					status.FailedChecks = deleteElementSlice(status.FailedChecks, idx)
 					os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", "error", "failed-ongoing-mig"))
 				}
 			}
@@ -864,7 +917,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 						util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", "error", "vmi-placement"), spec, "ctlplane VMs are now placed in separate nodes")
 					}
 					idx := slices.Index(status.FailedChecks, "found multiple ctlplane VMs in the same node, please execute oc get vm -n openstack -o wide for details")
-					deleteElementSlice(status.FailedChecks, idx)
+					status.FailedChecks = deleteElementSlice(status.FailedChecks, idx)
 					os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", "error", "vmi-placement"))
 				}
 			}
@@ -885,7 +938,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 						util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", "modifyfileperm", "openstackclient"), spec, "modified file permission (/home/cloud-admin/.ssh/config) in openstackclient pod")
 					}
 					idx := slices.Index(status.FailedChecks, "failed to modify cloud-admin ssh file permission")
-					deleteElementSlice(status.FailedChecks, idx)
+					status.FailedChecks = deleteElementSlice(status.FailedChecks, idx)
 					os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", "modifyfileperm", "openstackclient"))
 				}
 			}
@@ -908,7 +961,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 						util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", "error", "pcs"), spec, "pcs errors are cleared")
 					}
 					idx := slices.Index(status.FailedChecks, "pcs errors")
-					deleteElementSlice(status.FailedChecks, idx)
+					status.FailedChecks = deleteElementSlice(status.FailedChecks, idx)
 					os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", "error", "pcs"))
 				}
 			}
@@ -931,11 +984,10 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 						util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", "checkstonith", "pcs"), spec, "pcs stonith is now enabled")
 					}
 					idx := slices.Index(status.FailedChecks, "stonith is disabled, please ignore if it is intended")
-					deleteElementSlice(status.FailedChecks, idx)
+					status.FailedChecks = deleteElementSlice(status.FailedChecks, idx)
 					os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", "checkstonith", "pcs"))
 				}
 			}
-
 			// check external IPs connectivity
 			log.Log.Info("Check external IPs connectivity from openstackclient pod")
 			if len(externalVIPs) > 0 {
@@ -958,7 +1010,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 									util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", external, "external-ip"), spec, fmt.Sprintf("external IP %s is now reachable", external))
 								}
 								idx := slices.Index(status.FailedChecks, fmt.Sprintf("external IP %s is unreachable", external))
-								deleteElementSlice(status.FailedChecks, idx)
+								status.FailedChecks = deleteElementSlice(status.FailedChecks, idx)
 								os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", external, "external-ip"))
 							}
 						}
@@ -988,7 +1040,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 									util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", vm, sftpIP[0]), spec, fmt.Sprintf("backup server IP %s is now reachable from control plane VM %s", sftpIP[0], vm))
 								}
 								idx := slices.Index(status.FailedChecks, fmt.Sprintf("backup server %s is unreachable from control plane VM %s", sftpIP[0], generateRandom(activeVM)))
-								deleteElementSlice(status.FailedChecks, idx)
+								status.FailedChecks = deleteElementSlice(status.FailedChecks, idx)
 								os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", vm, sftpIP[0]))
 							}
 						}
@@ -997,7 +1049,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				wg.Wait()
 			}
 			// check multiple galera containers
-			log.Log.Info("Check for multiple containers in each control plane VM")
+			log.Log.Info("Check for multiple galera containers in each control plane VM")
 			wg.Add(len(activeVM))
 			for _, vm := range activeVM {
 				go func() {
@@ -1017,7 +1069,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 								util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", vm, "galera"), spec, fmt.Sprintf("found multiple running galera containers in VM %s", vm))
 							}
 							idx := slices.Index(status.FailedChecks, fmt.Sprintf("found multiple running galera containers in VM %s", vm))
-							deleteElementSlice(status.FailedChecks, idx)
+							status.FailedChecks = deleteElementSlice(status.FailedChecks, idx)
 							os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", vm, "galera"))
 						}
 					}
@@ -1033,7 +1085,6 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			}
 			// check workload status
 			log.Log.Info("Check for workload VMs with non active state")
-			var allFailedVms []string
 			vm_status := []string{"shutoff", "build", "error", "migrating", "paused", "reboot", "rescue", "resize", "unknown", "suspended", "shelved", "verify_resize"}
 			wg.Add(len(vm_status))
 			for _, vmstatus := range vm_status {
@@ -1046,50 +1097,34 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 					}
 					if len(failedVm) > 0 {
 						for _, vm := range failedVm {
-							allFailedVms = append(allFailedVms, vm)
 							vmData := strings.SplitN(vm, ":", 2)
 							if !slices.Contains(status.FailedChecks, fmt.Sprintf("found VM %s with non-running status on host %s", vmData[0], vmData[1])) {
 								if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
 									util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", vmData[0], vmData[1]), spec, fmt.Sprintf("VM %s has status %s on host %s", vmData[0], vmstatus, vmData[1]))
 								}
-								status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("found VM %s with non-running status in host %s", vmData[0], vmData[1]))
+								status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("found VM %s with non-running status on host %s", vmData[0], vmData[1]))
 							}
 						}
 					}
 				}()
 			}
 			wg.Wait()
-			running, err = isRunning(clientset)
-			if err != nil {
-				log.Log.Error(err, "unable to retrieve jobs in openstack namespace")
-			}
-			if running {
-				return ctrl.Result{}, fmt.Errorf("there is an on-going/pending job in openstack, exiting")
-			}
-			if len(allFailedVms) > 0 {
-				wg.Add(len(allFailedVms))
-				for _, vm := range allFailedVms {
-					go func() {
-						defer wg.Done()
-						vmData := strings.SplitN(vm, ":", 2)
-						workloadReq := returnCommand(r, fmt.Sprintf("openstack server list --all-projects --long -c Status --name %s -f value", vmData[0]))
-						activev, err := util.ClearWorkloadVm(workloadReq, r.RESTConfig, util.HandleCNString(vm))
-						if err != nil {
-							log.Log.Error(err, "unable to retrieve active vm")
+			for idx, item := range status.FailedChecks {
+				if strings.Contains(item, "with non-running status") {
+					vms := strings.Split(item, " ")
+					workloadReq := returnCommand(r, fmt.Sprintf("openstack server list --all-projects --long -c Status --name %s -f value", vms[2]))
+					activev, err := util.ClearWorkloadVm(workloadReq, r.RESTConfig, util.HandleCNString(vms[8]))
+					if err != nil {
+						log.Log.Error(err, "unable to retrieve active vm")
+					}
+					if activev {
+						if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+							util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", vms[2], vms[8]), spec, fmt.Sprintf("VM %s is now running with active status on host %s", vms[2], vms[8]))
 						}
-						if activev {
-							if slices.Contains(status.FailedChecks, fmt.Sprintf("found VM %s with non-running status on host %s", vmData[0], vmData[1])) {
-								if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-									util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", vmData[0], vmData[1]), spec, fmt.Sprintf("VM %s is now running with active status on host %s", vmData[0], vmData[1]))
-								}
-								idx := slices.Index(status.FailedChecks, fmt.Sprintf("found VM %s with non-running status on host %s", vmData[0], vmData[1]))
-								deleteElementSlice(status.FailedChecks, idx)
-								os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", vmData[0], vmData[1]))
-							}
-						}
-					}()
+						status.FailedChecks = deleteElementSlice(status.FailedChecks, idx)
+						os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", vms[2], vms[8]))
+					}
 				}
-				wg.Wait()
 			}
 			running, err = isRunning(clientset)
 			if err != nil {
@@ -1126,7 +1161,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 									util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, co), spec, fmt.Sprintf("host %s is now reachable on  %s network", host, co))
 								}
 								idx := slices.Index(status.FailedChecks, fmt.Sprintf("host %s is unreachable on  %s network", host, co))
-								deleteElementSlice(status.FailedChecks, idx)
+								status.FailedChecks = deleteElementSlice(status.FailedChecks, idx)
 								os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", host, co))
 							}
 						}
@@ -1159,7 +1194,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 								util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "computesvc"), spec, fmt.Sprintf("nova service is now up in compute %s", host))
 							}
 							idx := slices.Index(status.FailedChecks, fmt.Sprintf("openstack compute service is down in node %s", host))
-							deleteElementSlice(status.FailedChecks, idx)
+							status.FailedChecks = deleteElementSlice(status.FailedChecks, idx)
 							os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "computesvc"))
 						}
 					}()
@@ -1191,7 +1226,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 								util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "networkagent"), spec, fmt.Sprintf("network agent is now up in %s", host))
 							}
 							idx := slices.Index(status.FailedChecks, fmt.Sprintf("openstack network agent is down in node %s", host))
-							deleteElementSlice(status.FailedChecks, idx)
+							status.FailedChecks = deleteElementSlice(status.FailedChecks, idx)
 							os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "networkagent"))
 						}
 
@@ -1207,6 +1242,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				return ctrl.Result{}, fmt.Errorf("there is an on-going/pending job in openstack, exiting")
 			}
 			// check nova containers
+			var clearNovaContainers []string
 			wg.Add(len(hosts))
 			for _, host := range hosts {
 				go func() {
@@ -1223,16 +1259,30 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 					} else {
 						if slices.Contains(status.FailedChecks, fmt.Sprintf("Not all nova containers are up and running on host %s", host)) {
 							if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-								util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "nova"), spec, fmt.Sprintf("all nova containers are up and running on host %s", host))
+								util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "nova"), spec, fmt.Sprintf("Not all nova containers are up and running on host %s", host))
 							}
-							idx := slices.Index(status.FailedChecks, fmt.Sprintf("Not all nova containers are up and running on host %s", host))
-							deleteElementSlice(status.FailedChecks, idx)
-							os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "nova"))
 						}
+						clearNovaContainers = append(clearNovaContainers, host)
+						os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "nova"))
 					}
 				}()
 			}
 			wg.Wait()
+			if len(clearNovaContainers) > 0 {
+				for _, host := range clearNovaContainers {
+					{
+						for idx, item := range status.FailedChecks {
+							if strings.Contains(item, fmt.Sprintf("Not all nova containers are up and running on host %s", host)) {
+								if len(status.FailedChecks) > 1 {
+									status.FailedChecks = append(status.FailedChecks[:idx], status.FailedChecks[idx+1:]...)
+								} else {
+									status.FailedChecks = status.FailedChecks[:len(status.FailedChecks)-1]
+								}
+							}
+						}
+					}
+				}
+			}
 			running, err = isRunning(clientset)
 			if err != nil {
 				log.Log.Error(err, "unable to retrieve jobs in openstack namespace")
@@ -1242,6 +1292,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			}
 			// check dpdk bond status
 			log.Log.Info("Check DPDK bond status on each host")
+			var clearDPDKbond3 []string
 			wg.Add(len(hosts))
 			for _, host := range hosts {
 				go func() {
@@ -1258,17 +1309,30 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 					} else {
 						if slices.Contains(status.FailedChecks, fmt.Sprintf("dpdkbond3 %s in %s", err, host)) {
 							if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-								util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-bond3"), spec, fmt.Sprintf("dpdkbond3 issue is cleared in %s", host))
+								util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-bond3"), spec, fmt.Sprintf("dpdkbond3 %s in %s", err, host))
 							}
-							idx := slices.Index(status.FailedChecks, fmt.Sprintf("dpdkbond3 %s in %s", err, host))
-							deleteElementSlice(status.FailedChecks, idx)
-							os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-bond3"))
 						}
-
+						clearDPDKbond3 = append(clearDPDKbond3, host)
+						os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-bond3"))
 					}
 				}()
 			}
 			wg.Wait()
+			if len(clearDPDKbond3) > 0 {
+				for _, host := range clearDPDKbond3 {
+					{
+						for idx, item := range status.FailedChecks {
+							if strings.Contains(item, fmt.Sprintf("dpdkbond3 %s in %s", host)) {
+								if len(status.FailedChecks) > 1 {
+									status.FailedChecks = append(status.FailedChecks[:idx], status.FailedChecks[idx+1:]...)
+								} else {
+									status.FailedChecks = status.FailedChecks[:len(status.FailedChecks)-1]
+								}
+							}
+						}
+					}
+				}
+			}
 			running, err = isRunning(clientset)
 			if err != nil {
 				log.Log.Error(err, "unable to retrieve jobs in openstack namespace")
@@ -1276,6 +1340,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			if running {
 				return ctrl.Result{}, fmt.Errorf("there is an on-going/pending job in openstack, exiting")
 			}
+			var clearDPDKbond4 []string
 			wg.Add(len(hosts))
 			for _, host := range hosts {
 				go func() {
@@ -1292,16 +1357,30 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 					} else {
 						if slices.Contains(status.FailedChecks, fmt.Sprintf("dpdkbond4 %s in %s", err, host)) {
 							if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-								util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-bond4"), spec, fmt.Sprintf("dpdkbond4 is cleared in %s", host))
+								util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-bond4"), spec, fmt.Sprintf("dpdkbond4 %s in %s", err, host))
 							}
-							idx := slices.Index(status.FailedChecks, fmt.Sprintf("dpdkbond4 %s in %s", err, host))
-							deleteElementSlice(status.FailedChecks, idx)
-							os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-bond4"))
 						}
+						clearDPDKbond4 = append(clearDPDKbond4, host)
+						os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-bond4"))
 					}
 				}()
 			}
 			wg.Wait()
+			if len(clearDPDKbond4) > 0 {
+				for _, host := range clearDPDKbond4 {
+					{
+						for idx, item := range status.FailedChecks {
+							if strings.Contains(item, fmt.Sprintf("dpdkbond4 %s in %s", host)) {
+								if len(status.FailedChecks) > 1 {
+									status.FailedChecks = append(status.FailedChecks[:idx], status.FailedChecks[idx+1:]...)
+								} else {
+									status.FailedChecks = status.FailedChecks[:len(status.FailedChecks)-1]
+								}
+							}
+						}
+					}
+				}
+			}
 			running, err = isRunning(clientset)
 			if err != nil {
 				log.Log.Error(err, "unable to retrieve jobs in openstack namespace")
@@ -1311,6 +1390,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			}
 			// ovs service
 			log.Log.Info("Check OVS service on each host")
+			var clearOvsService []string
 			wg.Add(len(hosts))
 			for _, host := range hosts {
 				go func() {
@@ -1318,25 +1398,39 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 					srvReq := returnCommand(r, fmt.Sprintf("ssh -q %s.ctlplane sudo systemctl status ovs-vswitchd.service", host))
 					err := util.CheckService(srvReq, r.RESTConfig, util.HandleCNString(host))
 					if err != nil {
-						if !slices.Contains(status.FailedChecks, fmt.Sprintf("%s in %s", err, host)) {
+						if !slices.Contains(status.FailedChecks, fmt.Sprintf("ovs-service issue in %s", host)) {
 							if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-								util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-srv"), spec, fmt.Sprintf("%s in %s", err, host))
+								util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-srv"), spec, fmt.Sprintf("ovs-service issue in %s", host))
 							}
-							status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("%s in %s", err, host))
+							status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("ovs-service issue in %s", host))
 						}
 					} else {
-						if slices.Contains(status.FailedChecks, fmt.Sprintf("%s in %s", err, host)) {
+						if slices.Contains(status.FailedChecks, fmt.Sprintf("ovs-service issue in %s", host)) {
 							if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-								util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-srv"), spec, fmt.Sprintf("%s in %s", err, host))
+								util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-srv"), spec, fmt.Sprintf("ovs-service issue in %s", host))
 							}
-							idx := slices.Index(status.FailedChecks, fmt.Sprintf("%s in %s", err, host))
-							deleteElementSlice(status.FailedChecks, idx)
-							os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-srv"))
 						}
+						clearOvsService = append(clearOvsService, host)
+						os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-srv"))
 					}
 				}()
 			}
 			wg.Wait()
+			if len(clearOvsService) > 0 {
+				for _, host := range clearOvsService {
+					{
+						for idx, item := range status.FailedChecks {
+							if strings.Contains(item, fmt.Sprintf("ovs-service issue in %s", host)) {
+								if len(status.FailedChecks) > 1 {
+									status.FailedChecks = append(status.FailedChecks[:idx], status.FailedChecks[idx+1:]...)
+								} else {
+									status.FailedChecks = status.FailedChecks[:len(status.FailedChecks)-1]
+								}
+							}
+						}
+					}
+				}
+			}
 			running, err = isRunning(clientset)
 			if err != nil {
 				log.Log.Error(err, "unable to retrieve jobs in openstack namespace")
@@ -1347,6 +1441,8 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			// ovs logs for bug/warning/error
 			log.Log.Info("Check OVS logs for error and warning on each host")
 			var ovsaffectedNodes []string
+			ovsaffectedNodes = nil
+			var ovsClearnodes []string
 			wg.Add(len(hosts))
 			for _, host := range hosts {
 				go func() {
@@ -1359,14 +1455,27 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 							status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("%s of ovs in %s", err, host))
 						}
 					} else {
-						if slices.Contains(status.FailedChecks, fmt.Sprintf("%s of ovs in %s", err, host)) {
-							idx := slices.Index(status.FailedChecks, fmt.Sprintf("%s of ovs in %s", err, host))
-							deleteElementSlice(status.FailedChecks, idx)
-						}
+						ovsClearnodes = append(ovsClearnodes, host)
+						os.Remove(fmt.Sprintf("/home/golanguser/.%s-%s.txt", host, "ovs-log"))
 					}
 				}()
 			}
 			wg.Wait()
+			if len(ovsClearnodes) > 0 {
+				for _, host := range ovsClearnodes {
+					{
+						for idx, item := range status.FailedChecks {
+							if strings.Contains(item, fmt.Sprintf("ovs in %s", host)) {
+								if len(status.FailedChecks) > 1 {
+									status.FailedChecks = append(status.FailedChecks[:idx], status.FailedChecks[idx+1:]...)
+								} else {
+									status.FailedChecks = status.FailedChecks[:len(status.FailedChecks)-1]
+								}
+							}
+						}
+					}
+				}
+			}
 			var ovss string
 			if len(ovsaffectedNodes) > 0 {
 				wg.Add(len(hosts))
@@ -1432,6 +1541,15 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 					util.SendEmailRecoveredAlert(env, ovsfileName, spec, fmt.Sprintf("observing errors/warnings in ovs log file of hosts %v", ovsaffectedNodes))
 				}
 				os.Remove(ovsfileName)
+				for idx, item := range status.FailedChecks {
+					if strings.Contains(item, "observing errors/warnings in log file of ovs") {
+						if len(status.FailedChecks) > 1 {
+							status.FailedChecks = append(status.FailedChecks[:idx], status.FailedChecks[idx+1:]...)
+						} else {
+							status.FailedChecks = status.FailedChecks[:len(status.FailedChecks)-1]
+						}
+					}
+				}
 			}
 			running, err = isRunning(clientset)
 			if err != nil {
@@ -1442,6 +1560,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			}
 			// ovs-vsctl show o/p
 			log.Log.Info("Check ovs-vsctl output")
+			var clearOvsVsctl []string
 			wg.Add(len(hosts))
 			for _, host := range hosts {
 				go func() {
@@ -1449,25 +1568,39 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 					intReq := returnCommand(r, fmt.Sprintf("ssh -q %s.ctlplane sudo ovs-vsctl show", host))
 					err := util.CheckOvsInterfaces(intReq, r.RESTConfig, util.HandleCNString(host))
 					if err != nil {
-						if !slices.Contains(status.FailedChecks, fmt.Sprintf("%s in %s", err, host)) {
+						if !slices.Contains(status.FailedChecks, fmt.Sprintf("ovs-vsctl show error in %s", host)) {
 							if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-								util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-int"), spec, fmt.Sprintf("%s in %s", err, host))
+								util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-int"), spec, fmt.Sprintf("ovs-vsctl show error in %s", host))
 							}
-							status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("%s in %s", err, host))
+							status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("ovs-vsctl show error in %s", host))
 						}
 					} else {
-						if slices.Contains(status.FailedChecks, fmt.Sprintf("%s in %s", err, host)) {
+						if slices.Contains(status.FailedChecks, fmt.Sprintf("ovs-vsctl show error in %s", host)) {
 							if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-								util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-int"), spec, fmt.Sprintf("%s in %s", err, host))
+								util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-int"), spec, fmt.Sprintf("ovs-vsctl show error in %s", host))
 							}
-							idx := slices.Index(status.FailedChecks, fmt.Sprintf("%s in %s", err, host))
-							deleteElementSlice(status.FailedChecks, idx)
-							os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-int"))
 						}
+						clearOvsVsctl = append(clearOvsVsctl, host)
+						os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-int"))
 					}
 				}()
 			}
 			wg.Wait()
+			if len(clearOvsVsctl) > 0 {
+				for _, host := range clearOvsVsctl {
+					{
+						for idx, item := range status.FailedChecks {
+							if strings.Contains(item, fmt.Sprintf("ovs-vsctl show error in %s", host)) {
+								if len(status.FailedChecks) > 1 {
+									status.FailedChecks = append(status.FailedChecks[:idx], status.FailedChecks[idx+1:]...)
+								} else {
+									status.FailedChecks = status.FailedChecks[:len(status.FailedChecks)-1]
+								}
+							}
+						}
+					}
+				}
+			}
 			running, err = isRunning(clientset)
 			if err != nil {
 				log.Log.Error(err, "unable to retrieve jobs in openstack namespace")
@@ -1477,6 +1610,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			}
 			// time sync
 			log.Log.Info("Check time sync on each host")
+			var clearTimeNodes []string
 			wg.Add(len(hosts))
 			for _, host := range hosts {
 				go func() {
@@ -1484,25 +1618,39 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 					intReq := returnCommand(r, fmt.Sprintf("ssh -q %s.ctlplane sudo timedatectl", host))
 					err := util.CheckTime(intReq, r.RESTConfig, util.HandleCNString(host))
 					if err != nil {
-						if !slices.Contains(status.FailedChecks, fmt.Sprintf("%s in %s", err, host)) {
+						if !slices.Contains(status.FailedChecks, fmt.Sprintf("time sync error in %s", host)) {
 							if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-								util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "chronyd"), spec, fmt.Sprintf("%s in %s", err, host))
+								util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "chronyd"), spec, fmt.Sprintf("time sync error in %s", host))
 							}
 							status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("%s in %s", err, host))
 						}
 					} else {
-						if slices.Contains(status.FailedChecks, fmt.Sprintf("%s in %s", err, host)) {
+						if slices.Contains(status.FailedChecks, fmt.Sprintf("timesync error in %s", host)) {
 							if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-								util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "chronyd"), spec, fmt.Sprintf("%s in %s", err, host))
+								util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "chronyd"), spec, fmt.Sprintf("timesync error  in %s", host))
 							}
-							idx := slices.Index(status.FailedChecks, fmt.Sprintf("%s in %s", err, host))
-							deleteElementSlice(status.FailedChecks, idx)
-							os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "chronyd"))
 						}
+						clearTimeNodes = append(clearTimeNodes, host)
+						os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "chronyd"))
 					}
 				}()
 			}
 			wg.Wait()
+			if len(clearTimeNodes) > 0 {
+				for _, host := range clearTimeNodes {
+					{
+						for idx, item := range status.FailedChecks {
+							if strings.Contains(item, fmt.Sprintf("time sync error in %s", host)) {
+								if len(status.FailedChecks) > 1 {
+									status.FailedChecks = append(status.FailedChecks[:idx], status.FailedChecks[idx+1:]...)
+								} else {
+									status.FailedChecks = status.FailedChecks[:len(status.FailedChecks)-1]
+								}
+							}
+						}
+					}
+				}
+			}
 			running, err = isRunning(clientset)
 			if err != nil {
 				log.Log.Error(err, "unable to retrieve jobs in openstack namespace")
@@ -1513,6 +1661,8 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			// nova logs
 			log.Log.Info("Check nova logs for errors/warning on each host")
 			var novaaffectedNodes []string
+			novaaffectedNodes = nil
+			var novaClearNodes []string
 			wg.Add(len(hosts))
 			for _, host := range hosts {
 				go func() {
@@ -1525,21 +1675,34 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 							status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("%s of nova in %s", err, host))
 						}
 					} else {
-						if slices.Contains(status.FailedChecks, fmt.Sprintf("%s of nova in %s", err, host)) {
-							idx := slices.Index(status.FailedChecks, fmt.Sprintf("%s of nova in %s", err, host))
-							deleteElementSlice(status.FailedChecks, idx)
-						}
+						novaClearNodes = append(novaClearNodes, host)
+						os.Remove(fmt.Sprintf("/home/golanguser/.%s-%s.txt", host, "nova-log"))
 					}
 				}()
 			}
 			wg.Wait()
+			if len(novaClearNodes) > 0 {
+				for _, host := range novaClearNodes {
+					{
+						for idx, item := range status.FailedChecks {
+							if strings.Contains(item, fmt.Sprintf("nova in %s", host)) {
+								if len(status.FailedChecks) > 1 {
+									status.FailedChecks = append(status.FailedChecks[:idx], status.FailedChecks[idx+1:]...)
+								} else {
+									status.FailedChecks = status.FailedChecks[:len(status.FailedChecks)-1]
+								}
+							}
+						}
+					}
+				}
+			}
 			var novas string
 			if len(novaaffectedNodes) > 0 {
 				wg.Add(len(hosts))
 				for _, host := range hosts {
 					go func() {
 						defer wg.Done()
-						if !slices.Contains(ovsaffectedNodes, host) {
+						if !slices.Contains(novaaffectedNodes, host) {
 							if _, err := os.Stat(fmt.Sprintf("/home/golanguser/.%s-%s.txt", host, "nova-log")); os.IsNotExist(err) {
 								//
 							} else {
@@ -1594,8 +1757,19 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 						novafileName = f.Name()
 					}
 				}
-				util.SendEmailRecoveredAlert(env, novafileName, spec, "No longer observing errors/warnings in nova log file of hosts")
+				if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+					util.SendEmailRecoveredAlert(env, novafileName, spec, "No longer observing errors/warnings in nova log file of hosts")
+				}
 				os.Remove(novafileName)
+				for idx, item := range status.FailedChecks {
+					if strings.Contains(item, "observing errors/warnings in log file of nova") {
+						if len(status.FailedChecks) > 1 {
+							status.FailedChecks = append(status.FailedChecks[:idx], status.FailedChecks[idx+1:]...)
+						} else {
+							status.FailedChecks = status.FailedChecks[:len(status.FailedChecks)-1]
+						}
+					}
+				}
 			}
 			running, err = isRunning(clientset)
 			if err != nil {
@@ -1604,8 +1778,122 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			if running {
 				return ctrl.Result{}, fmt.Errorf("there is an on-going/pending job in openstack, exiting")
 			}
+			// check for stale resource allocations in nova logs of each host
+			log.Log.Info("Check nova logs for errors/warning on each host")
+			var novaStaleNodes []string
+			novaStaleNodes = nil
+			var novaClearStaleNodes []string
+			wg.Add(len(hosts))
+			for _, host := range hosts {
+				go func() {
+					defer wg.Done()
+					intReq := returnCommand(r, fmt.Sprintf("ssh -q %s.ctlplane sudo cat /var/log/containers/nova/nova-compute.log", host))
+					err := util.CheckStaleResources(intReq, r.RESTConfig, util.HandleCNString(host))
+					if err != nil {
+						novaStaleNodes = append(novaStaleNodes, host)
+						if !slices.Contains(status.FailedChecks, fmt.Sprintf("%s in %s", err, host)) {
+							status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("%s in %s", err, host))
+						}
+					} else {
+						novaClearStaleNodes = append(novaClearStaleNodes, host)
+						os.Remove(fmt.Sprintf("/home/golanguser/.%s-%s.txt", host, "nova-stale"))
+					}
+				}()
+			}
+			wg.Wait()
+			if len(novaClearNodes) > 0 {
+				for _, host := range novaClearNodes {
+					{
+						for idx, item := range status.FailedChecks {
+							if strings.Contains(item, fmt.Sprintf("found stale resource allocations in %s", host)) {
+								if len(status.FailedChecks) > 1 {
+									status.FailedChecks = append(status.FailedChecks[:idx], status.FailedChecks[idx+1:]...)
+								} else {
+									status.FailedChecks = status.FailedChecks[:len(status.FailedChecks)-1]
+								}
+							}
+						}
+					}
+				}
+			}
+			var novastale string
+			if len(novaStaleNodes) > 0 {
+				wg.Add(len(hosts))
+				for _, host := range hosts {
+					go func() {
+						defer wg.Done()
+						if !slices.Contains(novaStaleNodes, host) {
+							if _, err := os.Stat(fmt.Sprintf("/home/golanguser/.%s-%s.txt", host, "nova-stale")); os.IsNotExist(err) {
+								//
+							} else {
+								err := os.WriteFile(fmt.Sprintf("/home/golanguser/.%s-%s.txt", host, "nova-stale"), []byte("sent"), 0666)
+								if err != nil {
+									log.Log.Error(err, fmt.Sprintf("unable to write email sent to nova stale log file of host %s", host))
+								}
+								if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+									util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/.%s-%s.txt", host, "nova-stale"), spec, fmt.Sprintf("Stale resource allocation warning has been cleared in nova log file of host %s", host))
+								}
+								os.Remove(fmt.Sprintf("/home/golanguser/.%s-%s.txt", host, "nova-stale"))
+							}
+						}
+					}()
+				}
+				wg.Wait()
+				wg.Add(len(novaStaleNodes))
+				for _, nhost := range novaStaleNodes {
+					go func() {
+						defer wg.Done()
+						if _, err := os.Stat(fmt.Sprintf("/home/golanguser/.%s-%s.txt", nhost, "nova-stale")); os.IsNotExist(err) {
+							_, err = os.Create(fmt.Sprintf("/home/golanguser/.%s-%s.txt", nhost, "nova-stale"))
+							if err != nil {
+								log.Log.Error(err, fmt.Sprintf("unable to create nova stale log file for host %s", nhost))
+							}
+						}
+					}()
+				}
+				wg.Wait()
+				if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+					slices.Sort(novaStaleNodes)
+					for _, host := range novaStaleNodes {
+						if strings.Contains(host, "-") {
+							_, af, _ := strings.Cut(host, "-")
+							novastale += af
+						}
+					}
+					util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/.%s-%s.txt", novastale, "novastale"), spec, fmt.Sprintf("found stale resource allocations in nova log file of hosts %v", novaaffectedNodes))
+				}
+			} else {
+				dir, err := os.Open("/home/golanguser/")
+				if err != nil {
+					log.Log.Error(err, "unable to open directory /home/golanguser")
+				}
+				files, err := os.ReadDir(dir.Name())
+				if err != nil {
+					log.Log.Error(err, "unable to read directory /home/golanguser")
+				}
+				var novafileName string
+				for _, f := range files {
+					if strings.Contains(f.Name(), "novastale") {
+						novafileName = f.Name()
+					}
+				}
+				if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+					util.SendEmailRecoveredAlert(env, novafileName, spec, "Stale resource allocation has been cleared in nova log file of hosts")
+				}
+				os.Remove(novafileName)
+				for idx, item := range status.FailedChecks {
+					if strings.Contains(item, "found stale resource allocations") {
+						if len(status.FailedChecks) > 1 {
+							status.FailedChecks = append(status.FailedChecks[:idx], status.FailedChecks[idx+1:]...)
+						} else {
+							status.FailedChecks = status.FailedChecks[:len(status.FailedChecks)-1]
+						}
+					}
+				}
+			}
 			// splunk
 			log.Log.Info("Check Splunk service on each host")
+			var clearSplunkNodes []string
 			wg.Add(len(hosts))
 			for _, host := range hosts {
 				go func() {
@@ -1613,25 +1901,40 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 					srvReq := returnCommand(r, fmt.Sprintf("ssh -q %s.ctlplane sudo systemctl status splunk.service", host))
 					err := util.CheckService(srvReq, r.RESTConfig, util.HandleCNString(host))
 					if err != nil {
-						if !slices.Contains(status.FailedChecks, fmt.Sprintf("%s in %s", err, host)) {
+						if !slices.Contains(status.FailedChecks, fmt.Sprintf("splunk service error in %s", host)) {
 							if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-								util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "splunk"), spec, fmt.Sprintf("%s in %s", err, host))
+								util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "splunk"), spec, fmt.Sprintf("splunk service error in %s", host))
 							}
-							status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("%s in %s", err, host))
+							status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("splunk service error in %s", err, host))
 						}
 					} else {
-						if slices.Contains(status.FailedChecks, fmt.Sprintf("%s in %s", err, host)) {
+						if slices.Contains(status.FailedChecks, fmt.Sprintf("splunk service error in %s", host)) {
 							if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-								util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "splunk"), spec, fmt.Sprintf("%s in %s", err, host))
+								util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "splunk"), spec, fmt.Sprintf("splunk service error in %s", host))
 							}
-							idx := slices.Index(status.FailedChecks, fmt.Sprintf("%s in %s", err, host))
-							deleteElementSlice(status.FailedChecks, idx)
-							os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "splunk"))
+
 						}
+						clearSplunkNodes = append(clearSplunkNodes, host)
+						os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "splunk"))
 					}
 				}()
 			}
 			wg.Wait()
+			if len(clearSplunkNodes) > 0 {
+				for _, host := range clearSplunkNodes {
+					{
+						for idx, item := range status.FailedChecks {
+							if strings.Contains(item, fmt.Sprintf("splunk service error in %s", host)) {
+								if len(status.FailedChecks) > 1 {
+									status.FailedChecks = append(status.FailedChecks[:idx], status.FailedChecks[idx+1:]...)
+								} else {
+									status.FailedChecks = status.FailedChecks[:len(status.FailedChecks)-1]
+								}
+							}
+						}
+					}
+				}
+			}
 		}
 	}
 	if len(status.FailedChecks) < 1 {
