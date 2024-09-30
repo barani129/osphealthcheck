@@ -448,6 +448,17 @@ func CheckLogs(rest *rest.Request, config *rest.Config, host string) error {
 	return nil
 }
 
+func CheckStaleResources(rest *rest.Request, config *rest.Config, host string) error {
+	data, err := ExecuteCommand(rest, config, host)
+	if err != nil {
+		return err
+	}
+	if strings.Contains(string(data), "There are allocations remaining against the source host") {
+		return fmt.Errorf("found stale resource allocations")
+	}
+	return nil
+}
+
 func CheckTime(rest *rest.Request, config *rest.Config, host string) error {
 	data, err := ExecuteCommand(rest, config, host)
 	if err != nil {
