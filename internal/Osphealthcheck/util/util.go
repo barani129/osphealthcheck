@@ -459,6 +459,39 @@ func CheckStaleResources(rest *rest.Request, config *rest.Config, host string) e
 	return nil
 }
 
+func CheckVMInterface(rest *rest.Request, config *rest.Config, host string) []string {
+	data, err := ExecuteCommand(rest, config, host)
+	if err != nil {
+		return nil
+	}
+	var intData []string
+	var intData2 []string
+	sliceData := strings.Split(string(data), "\n")
+	for _, inte := range sliceData {
+		if strings.Contains(inte, "name                : vhu") {
+			intData = append(intData, inte)
+		}
+	}
+	if len(intData) > 0 {
+		for _, inter := range intData {
+			inte := strings.Split(inter, "name                : ")
+			intData2 = append(intData2, inte[1])
+		}
+	}
+	return intData2
+}
+
+func GetVMInterface(rest *rest.Request, config *rest.Config, host string) error {
+	data, err := ExecuteCommand(rest, config, host)
+	if err != nil {
+		return err
+	}
+	if strings.Contains(string(data), "down") {
+		return fmt.Errorf("VM interface is down")
+	}
+	return nil
+}
+
 func CheckTime(rest *rest.Request, config *rest.Config, host string) error {
 	data, err := ExecuteCommand(rest, config, host)
 	if err != nil {
@@ -510,7 +543,7 @@ func CheckFailedMigrations(clientset *kubernetes.Clientset) ([]string, error) {
 		return nil, err
 	}
 	for _, vm := range vmList.Items {
-		if vm.Name != "" {
+		if vm.Name != "" && strings.Contains(vm.Name, "controller-") {
 			if vm.Status.MigrationState != nil {
 				if !vm.Status.MigrationState.Completed {
 					migrations = append(migrations, vm.Name)
@@ -533,10 +566,12 @@ func CheckFailedVms(clientset *kubernetes.Clientset) ([]string, []string, error)
 		return nil, nil, err
 	}
 	for _, vm := range vmList.Items {
-		if vm.Status.Phase == "Running" {
-			activeVM = append(activeVM, vm.Name)
-		} else {
-			nonActiveVM = append(nonActiveVM, vm.Name)
+		if strings.Contains(vm.Name, "controller-") {
+			if vm.Status.Phase == "Running" {
+				activeVM = append(activeVM, vm.Name)
+			} else {
+				nonActiveVM = append(nonActiveVM, vm.Name)
+			}
 		}
 	}
 	return activeVM, nonActiveVM, nil
@@ -595,7 +630,9 @@ func CheckVMIPlacement(clientset *kubernetes.Clientset) ([]string, string, error
 		return nil, "", err
 	}
 	for _, vmi := range vmList.Items {
-		vmiNodes[vmi.Status.NodeName] = append(vmiNodes[vmi.Status.NodeName], vmi.Name)
+		if strings.Contains(vmi.Name, "controller-") {
+			vmiNodes[vmi.Status.NodeName] = append(vmiNodes[vmi.Status.NodeName], vmi.Name)
+		}
 	}
 	for _, node := range nodeList.Items {
 		vminodelist := vmiNodes[node.Name]
