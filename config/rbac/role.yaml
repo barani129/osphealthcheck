@@ -18,6 +18,7 @@ rules:
   - events
   verbs:
   - create
+  - get
   - patch
 - apiGroups:
   - ""
@@ -122,6 +123,15 @@ rules:
   - get
   - list
   - watch
+- apiGroups:
+  - events.k8s.io
+  resources:
+  - events
+  verbs:
+  - create
+  - get
+  - list
+  - patch
 - apiGroups:
   - kubevirt.io
   resources:
