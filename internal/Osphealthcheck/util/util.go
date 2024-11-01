@@ -371,6 +371,36 @@ func GetHostList(rest *rest.Request, config *rest.Config, host string) ([]string
 	return hosts, nil
 }
 
+func CheckCinderService(rest *rest.Request, config *rest.Config, host string) ([]string, []string, error) {
+	var hosts []string
+	var unhosts []string
+	data, err := ExecuteCommand(rest, config, host)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(string(data)) <= 1 {
+		return nil, nil, fmt.Errorf("no cinder service configured")
+	}
+	sliceData := strings.Split(string(data), "\n")
+	for _, svc := range sliceData {
+		svc = strings.Trim(svc, "\n")
+		if svc != "\n" {
+			if strings.Contains(svc, "down") || strings.Contains(svc, "disabled") {
+				svcNames := strings.Split(svc, " ")
+				if svcNames[0] != " " {
+					hosts = append(hosts, svcNames[0])
+				}
+			} else {
+				svcNames := strings.Split(svc, " ")
+				if svcNames[0] != " " {
+					unhosts = append(unhosts, svcNames[0])
+				}
+			}
+		}
+	}
+	return hosts, unhosts, nil
+}
+
 func GetNovaContainers(rest *rest.Request, config *rest.Config, host string) error {
 	var nova []string
 	data, err := ExecuteCommand(rest, config, host)
