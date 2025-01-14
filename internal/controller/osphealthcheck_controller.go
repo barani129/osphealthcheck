@@ -287,7 +287,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		if criticalAlert != nil && *criticalAlert {
 			if !slices.Contains(status.FailedChecks, "found a critical alert in openstack namespace") {
 				if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-					util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", "openstack", "critical"), spec, "found a critical alert in openstack namespace")
+					util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", "openstack", "critical"), spec, "found a critical alert in openstack namespace, please execute <sas get alerts --critical> on jump server to validate it")
 				}
 				status.FailedChecks = append(status.FailedChecks, "found a critical alert in openstack namespace")
 			}
@@ -301,7 +301,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			for _, vm := range nonActiveVM {
 				if !slices.Contains(status.FailedChecks, fmt.Sprintf("found a failed or stopped vm %s", vm)) {
 					if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-						util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", vm, "non-active"), spec, fmt.Sprintf("found a failed or stopped vm %s", vm))
+						util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", vm, "non-active"), spec, fmt.Sprintf("found a failed or stopped vm %s, please execute <oc get vmi -n openstack> on jump host (after oc login) to validate it", vm))
 					}
 					status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("found a failed or stopped vm %s", vm))
 				}
@@ -316,7 +316,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		if len(mig) > 0 {
 			if !slices.Contains(status.FailedChecks, "found a failed or on-going migration") {
 				if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-					util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", "error", "failed-ongoing-mig"), spec, fmt.Sprintf("found a failed or an on-going migration of vm %v", mig))
+					util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", "error", "failed-ongoing-mig"), spec, fmt.Sprintf("found a failed or an on-going migration of vm %v, please execute <oc get vmi -n openstack> to validate it", mig))
 				}
 				status.FailedChecks = append(status.FailedChecks, "found a failed or on-going migration")
 			}
@@ -327,11 +327,11 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			log.Log.Error(err, "unable to retrieve vm list in openstack namespace")
 		}
 		if len(affectedVms) > 0 {
-			if !slices.Contains(status.FailedChecks, "found multiple ctlplane VMs in the same node, please execute oc get vm -n openstack -o wide for details") {
+			if !slices.Contains(status.FailedChecks, "found multiple ctlplane VMs in the same node") {
 				if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-					util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", "error", "vmi-placement"), spec, fmt.Sprintf("found multiple ctlplane VMs in the same node %s", node))
+					util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", "error", "vmi-placement"), spec, fmt.Sprintf("found multiple ctlplane VMs in the same node %s, please execute <oc get vmi -n openstack -o wide> to validate it", node))
 				}
-				status.FailedChecks = append(status.FailedChecks, "found multiple ctlplane VMs in the same node, please execute oc get vm -n openstack -o wide for details")
+				status.FailedChecks = append(status.FailedChecks, "found multiple ctlplane VMs in the same node")
 			}
 		}
 		log.Log.Info("Modifying ssh config file permission to avoid openstack command execution failure after openstackclient pod restarts")
@@ -344,7 +344,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				}
 				status.FailedChecks = append(status.FailedChecks, "failed to modify cloud-admin ssh file permission")
 			}
-			return ctrl.Result{}, fmt.Errorf("unable to modify file permission of /home/cloud-admin/.ssh/config in openstackclient pod, exiting as subsequent healtchecks might fail")
+			return ctrl.Result{RequeueAfter: defaultHealthCheckInterval}, fmt.Errorf("unable to modify file permission of /home/cloud-admin/.ssh/config in openstackclient pod, exiting as subsequent healtchecks might fail")
 		}
 		log.Log.Info("Check pcs status")
 		pcsReq := returnCommand(r, fmt.Sprintf("ssh -q %s.ctlplane sudo pcs status", generateRandom(activeVM)))
@@ -355,7 +355,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		if len(pcsErr) > 0 {
 			if !slices.Contains(status.FailedChecks, "pcs errors") {
 				if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-					util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", "error", "pcs"), spec, "found pcs errors in controller, please check")
+					util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", "error", "pcs"), spec, fmt.Sprintf("found pcs errors in controller, please execute <ssh -q %s.ctlplane pcs status> on openstackclient pod (after oc login/oc project openstack/oc rsh openstackclient) to validate it", generateRandom(activeVM)))
 				}
 				status.FailedChecks = append(status.FailedChecks, "pcs errors")
 			}
@@ -369,7 +369,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		if stonith {
 			if !slices.Contains(status.FailedChecks, "stonith is disabled, please ignore if it is intended") {
 				if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-					util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", "checkstonith", "pcs"), spec, "pcs stonith is disabled, please ignore if it is intended.")
+					util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", "checkstonith", "pcs"), spec, fmt.Sprintf("pcs stonith is disabled, please ignore if it is intended. Please execute <ssh -q %s.ctlplane sudo pcs property show stonith-enabled> on openstackclient pod (after oc login/oc project openstack/oc rsh openstackclient) to validate it", generateRandom(activeVM)))
 				}
 				status.FailedChecks = append(status.FailedChecks, "stonith is disabled, please ignore if it is intended")
 			}
@@ -386,7 +386,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				if svc != " " {
 					if !slices.Contains(status.FailedChecks, fmt.Sprintf("volume service %s is down/disabled", svc)) {
 						if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-							util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", "cinder", svc), spec, fmt.Sprintf("volume service %s is down/disabled", svc))
+							util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", "cinder", svc), spec, fmt.Sprintf("volume service %s is down/disabled, please execute <openstack volume service list> on openstackclient pod (after oc login/oc project openstack/oc rsh openstackclient) to validate it", svc))
 						}
 						status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("volume service %s is down/disabled", svc))
 					}
@@ -404,11 +404,11 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 					extReq := returnCommand(r, fmt.Sprintf("ping -c 3 %s", external))
 					err := util.ModifyExecuteCommand(extReq, r.RESTConfig, util.HandleCNString(external))
 					if err != nil {
-						if !slices.Contains(status.FailedChecks, fmt.Sprintf("external IP %s is unreachable from %s.ctlplane", external, generateRandom(activeVM))) {
+						if !slices.Contains(status.FailedChecks, fmt.Sprintf("external IP %s is unreachable from openstackclient pod", external)) {
 							if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-								util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", external, "external-ip"), spec, fmt.Sprintf("external IP %s is unreachable from openstackclient pod", external))
+								util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", external, "external-ip"), spec, fmt.Sprintf("external IP %s is unreachable from openstackclient pod, please execute <ping -c 3 %s> on openstackclient pod (after oc login/oc project openstack/oc rsh openstackclient) to validate", external, external))
 							}
-							status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("external IP %s is unreachable from %s.ctlplane", external, generateRandom(activeVM)))
+							status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("external IP %s is unreachable from openstackclient pod", external))
 						}
 					}
 				}()
@@ -427,7 +427,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 					if err != nil {
 						if !slices.Contains(status.FailedChecks, fmt.Sprintf("backup server %s is unreachable from control plane VM %s", sftpIP[0], generateRandom(activeVM))) {
 							if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-								util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", vm, sftpIP[0]), spec, fmt.Sprintf("backup server IP %s is unreachable from control plane VM %s", sftpIP[0], vm))
+								util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", vm, sftpIP[0]), spec, fmt.Sprintf("backup server IP %s is unreachable from control plane VM %s, please execute <ssh -q %s.ctlplane sudo nc -zv -w 3 %s 22> on openstackclient pod (after oc login/oc project openstack/oc rsh openstackclient) to validate it", sftpIP[0], vm, vm, sftpIP[0]))
 							}
 							status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("backup server %s is unreachable from control plane VM %s", sftpIP[0], generateRandom(activeVM)))
 						}
@@ -447,7 +447,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				if err != nil {
 					if !slices.Contains(status.FailedChecks, fmt.Sprintf("found multiple running galera containers in VM %s", vm)) {
 						if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-							util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", vm, "galera"), spec, fmt.Sprintf("found multiple running galera containers in VM %s", vm))
+							util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", vm, "galera"), spec, fmt.Sprintf("found multiple running galera containers in VM %s this would cause backup failure, please execute <ssh -q %s.ctlplane sudo podman ps -a --format {{.ID}} --filter name=galera> on openstackclient pod (after oc login/oc project openstack/oc rsh openstackclient) to validate it", vm, vm))
 						}
 						status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("found multiple running galera containers in VM %s", vm))
 					}
@@ -460,7 +460,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			log.Log.Error(err, "unable to retrieve jobs in openstack namespace")
 		}
 		if running {
-			return ctrl.Result{}, fmt.Errorf("there is an on-going/pending job in openstack, exiting")
+			return ctrl.Result{RequeueAfter: defaultHealthCheckInterval}, fmt.Errorf("there is an on-going/pending job in openstack, exiting")
 		}
 		// check workload status
 		log.Log.Info("Check for workload VMs with non active state")
@@ -479,7 +479,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 						vmData := strings.SplitN(vm, ":", 2)
 						if !slices.Contains(status.FailedChecks, fmt.Sprintf("found VM %s with non-running status on host %s", vmData[0], vmData[1])) {
 							if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-								util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", vmData[0], vmData[1]), spec, fmt.Sprintf("VM %s has status %s on host %s", vmData[0], vmstatus, vmData[1]))
+								util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", vmData[0], vmData[1]), spec, fmt.Sprintf("VM %s has status %s on host %s, please execute <openstack server list --all-projects --long --status %s> on openstackclient pod (after oc login/oc project openstack/oc rsh openstackclient) to validate it", vmData[0], vmstatus, vmData[1], vmstatus))
 							}
 							status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("found VM %s with non-running status on host %s", vmData[0], vmData[1]))
 						}
@@ -493,7 +493,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			log.Log.Error(err, "unable to retrieve jobs in openstack namespace")
 		}
 		if running {
-			return ctrl.Result{}, fmt.Errorf("there is an on-going/pending job in openstack, exiting")
+			return ctrl.Result{RequeueAfter: defaultHealthCheckInterval}, fmt.Errorf("there is an on-going/pending job in openstack, exiting")
 		}
 		// retrieve compute list and check connectivity on ctlplane, tenant, internal, storage
 		hostReq := returnCommand(r, "openstack compute service list -c Host -f value")
@@ -512,11 +512,13 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			for _, host := range hostsErr {
 				newHost, _, _ := strings.Cut(host, ".")
 				errHosts = append(errHosts, newHost)
-				if !slices.Contains(status.FailedChecks, fmt.Sprintf("openstack compute service is down in node %s", host)) {
+			}
+			for _, nhost := range errHosts {
+				if !slices.Contains(status.FailedChecks, fmt.Sprintf("openstack compute service is down in node %s", nhost)) {
 					if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-						util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "computesvc"), spec, fmt.Sprintf("nova service is down in compute %s", host))
+						util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", nhost, "computesvc"), spec, fmt.Sprintf("nova service is down in compute %s, please execute <openstack compute service list> on openstackclient pod (after oc login/oc project openstack/oc rsh openstackclient) to validate it", nhost))
 					}
-					status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("openstack compute service is down in node %s", host))
+					status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("openstack compute service is down in node %s", nhost))
 				}
 			}
 		}
@@ -540,7 +542,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 					if err != nil {
 						if !slices.Contains(status.FailedChecks, fmt.Sprintf("host %s is unreachable on  %s network", host, co)) {
 							if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-								util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, co), spec, fmt.Sprintf("host %s is unreachable on %s network", host, co))
+								util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, co), spec, fmt.Sprintf("host %s is unreachable on %s network, please execute <ssh -q %s.ctlplane sudo ping -c 3 %s.%s> on openstackclient pod (after oc login/oc project openstack/oc rsh openstackclient) to validate it", host, co, generateRandom(activeVM), host, co))
 							}
 							status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("host %s is unreachable on  %s network", host, co))
 						}
@@ -559,7 +561,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			for _, host := range netErr {
 				if !slices.Contains(status.FailedChecks, fmt.Sprintf("openstack network agent is down in node %s", host)) {
 					if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-						util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "networkagent"), spec, fmt.Sprintf("network agent is down in %s", host))
+						util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "networkagent"), spec, fmt.Sprintf("network agent is down in %s, please execute <openstack network agent list> on openstackclient pod (after oc login/oc project openstack/oc rsh openstackclient) to validate it", host))
 					}
 					status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("openstack network agent is down in node %s", host))
 				}
@@ -567,10 +569,10 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		}
 		running, err = isRunning(clientset)
 		if err != nil {
-			log.Log.Error(err, "unable to retrieve jobs in openstack namespace")
+			log.Log.Info(fmt.Sprintf("unable to retrieve jobs in openstack namespace with error %s", err.Error()))
 		}
 		if running {
-			return ctrl.Result{}, fmt.Errorf("there is an on-going/pending job in openstack, exiting")
+			return ctrl.Result{RequeueAfter: defaultHealthCheckInterval}, fmt.Errorf("there is an on-going/pending job in openstack, exiting")
 		}
 		// check nova containers
 		wg.Add(len(hosts))
@@ -580,11 +582,11 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				novaReq := returnCommand(r, fmt.Sprintf("ssh -q %s.ctlplane sudo podman ps --format {{.ID}} --filter name=nova", host))
 				err := util.GetNovaContainers(novaReq, r.RESTConfig, util.HandleCNString(host))
 				if err != nil {
-					if !slices.Contains(status.FailedChecks, fmt.Sprintf("Not all nova containers are up and running on host %s", host)) {
+					if !slices.Contains(status.FailedChecks, fmt.Sprintf("Not all nova containers are up and running in host %s", host)) {
 						if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-							util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "nova"), spec, fmt.Sprintf("Not all nova containers are up and running on host %s", host))
+							util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "nova"), spec, fmt.Sprintf("Not all nova containers are up and running in host %s, please execute <ssh -q %s.ctlplane sudo podman ps --format {{.ID}} --filter name=nova> on openstackclient pod (after oc login/oc project openstack/oc rsh openstackclient) to validate it", host, host))
 						}
-						status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("Not all nova containers are up and running on host %s", host))
+						status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("Not all nova containers are up and running in host %s", host))
 					}
 				}
 			}()
@@ -595,7 +597,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			log.Log.Error(err, "unable to retrieve jobs in openstack namespace")
 		}
 		if running {
-			return ctrl.Result{}, fmt.Errorf("there is an on-going/pending job in openstack, exiting")
+			return ctrl.Result{RequeueAfter: defaultHealthCheckInterval}, fmt.Errorf("there is an on-going/pending job in openstack, exiting")
 		}
 		// check dpdk bond status
 		log.Log.Info("Check DPDK bond status on each host")
@@ -606,11 +608,11 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				bond3Req := returnCommand(r, fmt.Sprintf("ssh -q %s.ctlplane sudo ovs-appctl bond/show dpdkbond3", host))
 				err := util.CheckOvsBond(bond3Req, r.RESTConfig, util.HandleCNString(host))
 				if err != nil {
-					if !slices.Contains(status.FailedChecks, fmt.Sprintf("dpdkbond3 %s in %s", err, host)) {
+					if !slices.Contains(status.FailedChecks, fmt.Sprintf("dpdkbond3 is down in %s", host)) {
 						if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-							util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-bond3"), spec, fmt.Sprintf("dpdkbond3 %s in %s", err, host))
+							util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-bond3"), spec, fmt.Sprintf("dpdkbond3 is down in %s, please execute <ssh -q %s.ctlplane sudo ovs-appctl bond/show dpdkbond3> on openstackclient pod (after oc login/oc project openstack/oc rsh openstackclient) to validate it", host, host))
 						}
-						status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("dpdkbond3 %s in %s", err, host))
+						status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("dpdkbond3 is down in %s", host))
 					}
 				}
 			}()
@@ -621,7 +623,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			log.Log.Error(err, "unable to retrieve jobs in openstack namespace")
 		}
 		if running {
-			return ctrl.Result{}, fmt.Errorf("there is an on-going/pending job in openstack, exiting")
+			return ctrl.Result{RequeueAfter: defaultHealthCheckInterval}, fmt.Errorf("there is an on-going/pending job in openstack, exiting")
 		}
 		wg.Add(len(hosts))
 		for _, host := range hosts {
@@ -630,11 +632,11 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				bond4Req := returnCommand(r, fmt.Sprintf("ssh -q %s.ctlplane sudo ovs-appctl bond/show dpdkbond4", host))
 				err := util.CheckOvsBond(bond4Req, r.RESTConfig, util.HandleCNString(host))
 				if err != nil {
-					if !slices.Contains(status.FailedChecks, fmt.Sprintf("dpdkbond4 %s in %s", err, host)) {
+					if !slices.Contains(status.FailedChecks, fmt.Sprintf("dpdkbond4 is down in %s", host)) {
 						if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-							util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-bond4"), spec, fmt.Sprintf("dpdkbond4 %s in %s", err, host))
+							util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-bond4"), spec, fmt.Sprintf("dpdkbond4 is down in %s, please execute <ssh -q %s.ctlplane sudo ovs-appctl bond/show dpdkbond4> on openstackclient pod (after oc login/oc project openstack/oc rsh openstackclient) to validate", host, host))
 						}
-						status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("dpdkbond4 %s in %s", err, host))
+						status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("dpdkbond4 is down in %s", host))
 					}
 				}
 			}()
@@ -645,7 +647,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			log.Log.Error(err, "unable to retrieve jobs in openstack namespace")
 		}
 		if running {
-			return ctrl.Result{}, fmt.Errorf("there is an on-going/pending job in openstack, exiting")
+			return ctrl.Result{RequeueAfter: defaultHealthCheckInterval}, fmt.Errorf("there is an on-going/pending job in openstack, exiting")
 		}
 		// ovs service
 		log.Log.Info("Check OVS service on each host")
@@ -658,7 +660,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				if err != nil {
 					if !slices.Contains(status.FailedChecks, fmt.Sprintf("ovs-service issue in %s", host)) {
 						if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-							util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-srv"), spec, fmt.Sprintf("ovs-service issue in %s", host))
+							util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-srv"), spec, fmt.Sprintf("ovs-service issue in %s, please execute <sh -q %s.ctlplane sudo systemctl status ovs-vswitchd.service> on openstackclient pod (after oc login/oc project openstack/oc rsh openstackclient) to validate it", host, host))
 						}
 						status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("ovs-service issue in %s", host))
 					}
@@ -671,7 +673,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			log.Log.Error(err, "unable to retrieve jobs in openstack namespace")
 		}
 		if running {
-			return ctrl.Result{}, fmt.Errorf("there is an on-going/pending job in openstack, exiting")
+			return ctrl.Result{RequeueAfter: defaultHealthCheckInterval}, fmt.Errorf("there is an on-going/pending job in openstack, exiting")
 		}
 		// ovs logs for bug/warning/error
 		log.Log.Info("Check OVS logs for error and warning on each host")
@@ -714,7 +716,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 						ovss += af
 					}
 				}
-				util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/.%s-%s.txt", ovss, "ovslog"), spec, fmt.Sprintf("observing errors/warnings in ovs log file of hosts %v", ovsaffectedNodes))
+				util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/.%s-%s.txt", ovss, "ovslog"), spec, "observing errors/warnings in ovs log file of hosts")
 			}
 		}
 		running, err = isRunning(clientset)
@@ -722,7 +724,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			log.Log.Error(err, "unable to retrieve jobs in openstack namespace")
 		}
 		if running {
-			return ctrl.Result{}, fmt.Errorf("there is an on-going/pending job in openstack, exiting")
+			return ctrl.Result{RequeueAfter: defaultHealthCheckInterval}, fmt.Errorf("there is an on-going/pending job in openstack, exiting")
 		}
 		// ovs-vsctl show o/p
 		log.Log.Info("Check ovs-vsctl output")
@@ -735,7 +737,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				if err != nil {
 					if !slices.Contains(status.FailedChecks, fmt.Sprintf("ovs-vsctl show error in %s", host)) {
 						if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-							util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-int"), spec, fmt.Sprintf("ovs-vsctl show error in %s", host))
+							util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-int"), spec, fmt.Sprintf("ovs-vsctl show error in %s, please execute <ssh -q %s.ctlplane sudo ovs-vsctl show> on openstackclient pod (after oc login/oc project openstack/oc rsh openstackclient) to validate", host, host))
 						}
 						status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("ovs-vsctl show error in %s", host))
 					}
@@ -748,7 +750,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			log.Log.Error(err, "unable to retrieve jobs in openstack namespace")
 		}
 		if running {
-			return ctrl.Result{}, fmt.Errorf("there is an on-going/pending job in openstack, exiting")
+			return ctrl.Result{RequeueAfter: defaultHealthCheckInterval}, fmt.Errorf("there is an on-going/pending job in openstack, exiting")
 		}
 		// time sync
 		log.Log.Info("Check time sync on each host")
@@ -761,7 +763,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				if err != nil {
 					if !slices.Contains(status.FailedChecks, fmt.Sprintf("timesync error in %s", host)) {
 						if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-							util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "chronyd"), spec, fmt.Sprintf("timesync error  in %s", host))
+							util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "chronyd"), spec, fmt.Sprintf("timesync error  in %s, please execute <ssh -q %s.ctlplane sudo timedatectl>", host, host))
 						}
 						status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("timesync error  in %s", host))
 					}
@@ -774,7 +776,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			log.Log.Error(err, "unable to retrieve jobs in openstack namespace")
 		}
 		if running {
-			return ctrl.Result{}, fmt.Errorf("there is an on-going/pending job in openstack, exiting")
+			return ctrl.Result{RequeueAfter: defaultHealthCheckInterval}, fmt.Errorf("there is an on-going/pending job in openstack, exiting")
 		}
 		// nova logs
 		log.Log.Info("Check nova logs for errors/warning on each host")
@@ -809,15 +811,15 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			}
 			wg.Wait()
 			if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-				slices.Sort(novaaffectedNodes)
-				var novas string
-				for _, host := range novaaffectedNodes {
-					if strings.Contains(host, "-") {
-						_, af, _ := strings.Cut(host, "-")
-						novas += af
-					}
-				}
-				util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/.%s-%s.txt", novas, "novalog"), spec, fmt.Sprintf("observing errors/warning in nova log file of hosts %v", novaaffectedNodes))
+				// slices.Sort(novaaffectedNodes)
+				// var novas string
+				// for _, host := range novaaffectedNodes {
+				// 	if strings.Contains(host, "-") {
+				// 		_, af, _ := strings.Cut(host, "-")
+				// 		novas += af
+				// 	}
+				// }
+				util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/.%s-%s.txt", "novas", "novalog"), spec, "observing errors/warning in nova log file of osp hosts")
 			}
 		}
 		running, err = isRunning(clientset)
@@ -825,7 +827,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			log.Log.Error(err, "unable to retrieve jobs in openstack namespace")
 		}
 		if running {
-			return ctrl.Result{}, fmt.Errorf("there is an on-going/pending job in openstack, exiting")
+			return ctrl.Result{RequeueAfter: defaultHealthCheckInterval}, fmt.Errorf("there is an on-going/pending job in openstack, exiting")
 		}
 		// stale allocations
 		log.Log.Info("Check nova logs for stale resource allocations on each host")
@@ -868,7 +870,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 						novas += af
 					}
 				}
-				util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/.%s-%s.txt", novas, "novastale"), spec, fmt.Sprintf("found stale resource allocations in nova log file of hosts %v", novaaffectedNodes))
+				util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/.%s-%s.txt", novas, "novastale"), spec, fmt.Sprintf("found stale resource allocations in nova log file of hosts %v, please execute sas get hosts <hostname> --usage on jump server and check listed servers exists in resource allocations", novaaffectedNodes))
 			}
 		}
 		running, err = isRunning(clientset)
@@ -876,7 +878,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			log.Log.Error(err, "unable to retrieve jobs in openstack namespace")
 		}
 		if running {
-			return ctrl.Result{}, fmt.Errorf("there is an on-going/pending job in openstack, exiting")
+			return ctrl.Result{RequeueAfter: defaultHealthCheckInterval}, fmt.Errorf("there is an on-going/pending job in openstack, exiting")
 		}
 		// splunk
 		log.Log.Info("Check Splunk service on each host")
@@ -889,7 +891,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				if err != nil {
 					if !slices.Contains(status.FailedChecks, fmt.Sprintf("splunk service error in %s", host)) {
 						if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-							util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "splunk"), spec, fmt.Sprintf("splunk service error in %s", host))
+							util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "splunk"), spec, fmt.Sprintf("splunk service error in %s, please execute <ssh -q %s.ctlplane sudo systemctl status splunk.service> on openstackclient pod (after oc login/oc project openstack/oc rsh openstackclient) to validate it", host, host))
 						}
 						status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("splunk service error in %s", host))
 					}
@@ -902,7 +904,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			log.Log.Error(err, "unable to retrieve jobs in openstack namespace")
 		}
 		if running {
-			return ctrl.Result{}, fmt.Errorf("there is an on-going/pending job in openstack, exiting")
+			return ctrl.Result{RequeueAfter: defaultHealthCheckInterval}, fmt.Errorf("there is an on-going/pending job in openstack, exiting")
 		}
 		log.Log.Info("Check VM interface state using ovs-vsctl list interface")
 		wg.Add(len(hosts))
@@ -918,7 +920,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 						if err != nil {
 							if !slices.Contains(status.FailedChecks, fmt.Sprintf("VM interface %s is down in host %s", inte, host)) {
 								if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-									util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", inte, "vminterface"), spec, fmt.Sprintf("VM interface %s is down in host %s", inte, host))
+									util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", inte, "vminterface"), spec, fmt.Sprintf("VM interface %s is down in host %s, please execute <ssh -q %s.ctlplane sudo ovs-vsctl list interface %s> on openstackclient pod (after oc login/oc project openstack/oc rsh openstackclient) to validate", inte, host, host, inte))
 								}
 								status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("VM interface %s is down in host %s", inte, host))
 							}
@@ -954,7 +956,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			} else {
 				if slices.Contains(status.FailedChecks, "found a critical alert in openstack namespace") {
 					if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-						util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", "openstack", "critical"), spec, "found a critical alert in openstack namespace")
+						util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", "openstack", "critical"), spec, "found a critical alert in openstack namespace, please execute <sas get alerts --critical> on jump server to validate it")
 					}
 					idx := slices.Index(status.FailedChecks, "found a critical alert in openstack namespace")
 					status.FailedChecks = deleteElementSlice(status.FailedChecks, idx)
@@ -979,7 +981,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				for _, vm := range activeVM {
 					if slices.Contains(status.FailedChecks, fmt.Sprintf("found a failed or stopped vm %s", vm)) {
 						if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-							util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", vm, "non-active"), spec, fmt.Sprintf("found a failed or stopped vm %s", vm))
+							util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", vm, "non-active"), spec, fmt.Sprintf("found a failed or stopped vm %s, please execute <oc get vmi -n openstack> to validate it", vm))
 						}
 						idx := slices.Index(status.FailedChecks, fmt.Sprintf("found a failed or stopped vm %s", vm))
 						status.FailedChecks = deleteElementSlice(status.FailedChecks, idx)
@@ -995,7 +997,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			if len(mig) > 0 {
 				if !slices.Contains(status.FailedChecks, "found a failed or on-going migration") {
 					if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-						util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", "error", "failed-ongoing-mig"), spec, fmt.Sprintf("found a failed or an on-going migration in vm %v", mig))
+						util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", "error", "failed-ongoing-mig"), spec, fmt.Sprintf("found a failed or an on-going migration of vm %v, please execute <oc get vmi -n openstack> to validate it", mig))
 					}
 					status.FailedChecks = append(status.FailedChecks, "found a failed or on-going migration")
 				}
@@ -1015,18 +1017,18 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				log.Log.Error(err, "unable to retrieve vm list in openstack namespace")
 			}
 			if len(affectedVms) > 0 {
-				if !slices.Contains(status.FailedChecks, "found multiple ctlplane VMs in the same node, please execute oc get vm -n openstack -o wide for details") {
+				if !slices.Contains(status.FailedChecks, "found multiple ctlplane VMs in the same node") {
 					if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-						util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", "error", "vmi-placement"), spec, fmt.Sprintf("found multiple ctlplane VMs in the same node %s", node))
+						util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", "error", "vmi-placement"), spec, fmt.Sprintf("found multiple ctlplane VMs in the same node %s, please execute <oc get vmi -n openstack -o wide> to validate it", node))
 					}
-					status.FailedChecks = append(status.FailedChecks, "found multiple ctlplane VMs in the same node, please execute oc get vm -n openstack -o wide for details")
+					status.FailedChecks = append(status.FailedChecks, "found multiple ctlplane VMs in the same node")
 				}
 			} else {
-				if slices.Contains(status.FailedChecks, "found multiple ctlplane VMs in the same node, please execute oc get vm -n openstack -o wide for details") {
+				if slices.Contains(status.FailedChecks, "found multiple ctlplane VMs in the same node") {
 					if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
 						util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", "error", "vmi-placement"), spec, "ctlplane VMs are now placed in separate nodes")
 					}
-					idx := slices.Index(status.FailedChecks, "found multiple ctlplane VMs in the same node, please execute oc get vm -n openstack -o wide for details")
+					idx := slices.Index(status.FailedChecks, "found multiple ctlplane VMs in the same node")
 					status.FailedChecks = deleteElementSlice(status.FailedChecks, idx)
 					os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", "error", "vmi-placement"))
 				}
@@ -1041,7 +1043,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 					}
 					status.FailedChecks = append(status.FailedChecks, "failed to modify cloud-admin ssh file permission")
 				}
-				return ctrl.Result{}, fmt.Errorf("unable to modify file permission of /home/cloud-admin/.ssh/config in openstackclient pod, exiting as subsequent healtchecks might fail")
+				return ctrl.Result{RequeueAfter: defaultHealthCheckInterval}, fmt.Errorf("unable to modify file permission of /home/cloud-admin/.ssh/config in openstackclient pod, exiting as subsequent healtchecks might fail")
 			} else {
 				if slices.Contains(status.FailedChecks, "failed to modify cloud-admin ssh file permission") {
 					if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
@@ -1061,7 +1063,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			if len(pcsErr) > 0 {
 				if !slices.Contains(status.FailedChecks, "pcs errors") {
 					if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-						util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", "error", "pcs"), spec, "found pcs errors in controller, please check")
+						util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", "error", "pcs"), spec, fmt.Sprintf("found pcs errors in controller, please execute <ssh -q %s.ctlplane pcs status> on openstackclient pod (after oc login/oc project openstack/oc rsh openstackclient) to validate it", generateRandom(activeVM)))
 					}
 					status.FailedChecks = append(status.FailedChecks, "pcs errors")
 				}
@@ -1084,7 +1086,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			if stonith {
 				if !slices.Contains(status.FailedChecks, "stonith is disabled, please ignore if it is intended") {
 					if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-						util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", "checkstonith", "pcs"), spec, "pcs stonith is disabled, , please ignore if it is intended.")
+						util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", "checkstonith", "pcs"), spec, "pcs stonith is disabled, please execute <ssh -q %s.ctlplane sudo pcs property show stonith-enabled> on openstackclient pod (after oc login/oc project openstack/oc rsh openstackclient) to validate, please ignore if it is intended.")
 					}
 					status.FailedChecks = append(status.FailedChecks, "stonith is disabled, please ignore if it is intended")
 				}
@@ -1110,7 +1112,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 					if svc != " " {
 						if !slices.Contains(status.FailedChecks, fmt.Sprintf("volume service %s is down/disabled", svc)) {
 							if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-								util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", "cinder", svc), spec, fmt.Sprintf("volume service %s is down/disabled", svc))
+								util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", "cinder", svc), spec, fmt.Sprintf("volume service %s is down/disabled, please execute <openstack volume service list> on openstackclient pod (after oc login/oc project openstack/oc rsh openstackclient) to validate it", svc))
 							}
 							status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("volume service %s is down", svc))
 						}
@@ -1143,7 +1145,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 						if err != nil {
 							if !slices.Contains(status.FailedChecks, fmt.Sprintf("external IP %s is unreachable", external)) {
 								if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-									util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", external, "external-ip"), spec, fmt.Sprintf("external IP %s is unreachable", external))
+									util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", external, "external-ip"), spec, fmt.Sprintf("external IP %s is unreachable from openstackclient pod, please execute <ping -c 3 %s> on openstackclient pod (after oc login/oc project openstack/oc rsh openstackclient) to validate", external, external))
 								}
 								status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("external IP %s is unreachable from %s.ctlplane", external, generateRandom(activeVM)))
 							}
@@ -1173,7 +1175,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 						if err != nil {
 							if !slices.Contains(status.FailedChecks, fmt.Sprintf("backup server %s is unreachable from control plane VM %s", sftpIP[0], generateRandom(activeVM))) {
 								if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-									util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", vm, sftpIP[0]), spec, fmt.Sprintf("backup server IP %s is unreachable from control plane VM %s", sftpIP[0], vm))
+									util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", vm, sftpIP[0]), spec, fmt.Sprintf("backup server IP %s is unreachable from control plane VM %s, please execute <ssh -q %s.ctlplane sudo nc -zv -w 3 %s 22> on openstackclient pod (after oc login/oc project openstack/oc rsh openstackclient) to validate it", sftpIP[0], vm, vm, sftpIP[0]))
 								}
 								status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("backup server %s is unreachable from control plane VM %s", sftpIP[0], generateRandom(activeVM)))
 							}
@@ -1202,14 +1204,14 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 					if err != nil {
 						if !slices.Contains(status.FailedChecks, fmt.Sprintf("found multiple running galera containers in VM %s", vm)) {
 							if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-								util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", vm, "galera"), spec, fmt.Sprintf("found multiple running galera containers in VM %s", vm))
+								util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", vm, "galera"), spec, fmt.Sprintf("found multiple running galera containers in VM %s this would cause controller vm backup failures, please execute <ssh -q %s.ctlplane sudo podman ps -a --format {{.ID}} --filter name=galera> on openstackclient pod (after oc login/oc project openstack/oc rsh openstackclient) to validate it", vm, vm))
 							}
 							status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("found multiple running galera containers in VM %s", vm))
 						}
 					} else {
 						if slices.Contains(status.FailedChecks, fmt.Sprintf("found multiple running galera containers in VM %s", vm)) {
 							if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-								util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", vm, "galera"), spec, fmt.Sprintf("found multiple running galera containers in VM %s", vm))
+								util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", vm, "galera"), spec, fmt.Sprintf("multiple running galera containers is now resolved in VM %s", vm))
 							}
 							idx := slices.Index(status.FailedChecks, fmt.Sprintf("found multiple running galera containers in VM %s", vm))
 							status.FailedChecks = deleteElementSlice(status.FailedChecks, idx)
@@ -1219,12 +1221,13 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				}()
 			}
 			wg.Wait()
+
 			running, err := isRunning(clientset)
 			if err != nil {
 				log.Log.Error(err, "unable to retrieve jobs in openstack namespace")
 			}
 			if running {
-				return ctrl.Result{}, fmt.Errorf("there is an on-going/pending job in openstack, exiting")
+				return ctrl.Result{RequeueAfter: defaultHealthCheckInterval}, fmt.Errorf("there is an on-going/pending job in openstack, exiting")
 			}
 			// check workload status
 			log.Log.Info("Check for workload VMs with non active state")
@@ -1243,7 +1246,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 							vmData := strings.SplitN(vm, ":", 2)
 							if !slices.Contains(status.FailedChecks, fmt.Sprintf("found VM %s with non-running status on host %s", vmData[0], vmData[1])) {
 								if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-									util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", vmData[0], vmData[1]), spec, fmt.Sprintf("VM %s has status %s on host %s", vmData[0], vmstatus, vmData[1]))
+									util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", vmData[0], vmData[1]), spec, fmt.Sprintf("VM %s has status %s on host %s, please execute <openstack server list --all-projects --long --status %s> on openstackclient pod (after oc login/oc project openstack/oc rsh openstackclient) to validate it", vmData[0], vmstatus, vmData[1], vmstatus))
 								}
 								status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("found VM %s with non-running status on host %s", vmData[0], vmData[1]))
 							}
@@ -1274,7 +1277,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				log.Log.Error(err, "unable to retrieve jobs in openstack namespace")
 			}
 			if running {
-				return ctrl.Result{}, fmt.Errorf("there is an on-going/pending job in openstack, exiting")
+				return ctrl.Result{RequeueAfter: defaultHealthCheckInterval}, fmt.Errorf("there is an on-going/pending job in openstack, exiting")
 			}
 			// retrieve compute list and check connectivity on ctlplane, tenant, internal, storage
 			hostReq := returnCommand(r, "openstack compute service list -c Host -f value")
@@ -1293,11 +1296,13 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				for _, host := range hostsErr {
 					newHost, _, _ := strings.Cut(host, ".")
 					errHosts = append(errHosts, newHost)
-					if !slices.Contains(status.FailedChecks, fmt.Sprintf("openstack compute service is down in node %s", host)) {
+				}
+				for _, nhost := range errHosts {
+					if !slices.Contains(status.FailedChecks, fmt.Sprintf("openstack compute service is down in node %s", nhost)) {
 						if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-							util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "computesvc"), spec, fmt.Sprintf("nova service is down in compute %s", host))
+							util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", nhost, "computesvc"), spec, fmt.Sprintf("nova service is down in compute %s, please execute <openstack compute service list> on openstackclient pod (after oc login/oc project openstack/oc rsh openstackclient) to validate it", nhost))
 						}
-						status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("openstack compute service is down in node %s", host))
+						status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("openstack compute service is down in node %s", nhost))
 					}
 				}
 			} else {
@@ -1337,7 +1342,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 						if err != nil {
 							if !slices.Contains(status.FailedChecks, fmt.Sprintf("host %s is unreachable on  %s network", host, co)) {
 								if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-									util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, co), spec, fmt.Sprintf("host %s is unreachable on  %s network", host, co))
+									util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, co), spec, fmt.Sprintf("host %s is unreachable on %s network, please execute <ssh -q %s.ctlplane sudo ping -c 3 %s.%s> on openstackclient pod (after oc login/oc project openstack/oc rsh openstackclient) to validate it", host, co, generateRandom(activeVM), host, co))
 								}
 								status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("host %s is unreachable on  %s network", host, co))
 							}
@@ -1365,7 +1370,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				for _, host := range netErr {
 					if !slices.Contains(status.FailedChecks, fmt.Sprintf("openstack network agent is down in node %s", host)) {
 						if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-							util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "networkagent"), spec, fmt.Sprintf("network agent is down in %s", host))
+							util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "networkagent"), spec, fmt.Sprintf("network agent is down in %s, please execute <openstack network agent list> on openstackclient pod (after oc login/oc project openstack/oc rsh openstackclient) to validate it", host))
 						}
 						status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("openstack network agent is down in node %s", host))
 					}
@@ -1393,7 +1398,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				log.Log.Error(err, "unable to retrieve jobs in openstack namespace")
 			}
 			if running {
-				return ctrl.Result{}, fmt.Errorf("there is an on-going/pending job in openstack, exiting")
+				return ctrl.Result{RequeueAfter: defaultHealthCheckInterval}, fmt.Errorf("there is an on-going/pending job in openstack, exiting")
 			}
 			// check nova containers
 			var clearNovaContainers []string
@@ -1404,16 +1409,16 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 					novaReq := returnCommand(r, fmt.Sprintf("ssh -q %s.ctlplane sudo podman ps --format {{.ID}} --filter name=nova", host))
 					err := util.GetNovaContainers(novaReq, r.RESTConfig, util.HandleCNString(host))
 					if err != nil {
-						if !slices.Contains(status.FailedChecks, fmt.Sprintf("Not all nova containers are up and running on host %s", host)) {
+						if !slices.Contains(status.FailedChecks, fmt.Sprintf("Not all nova containers are up and running in host %s", host)) {
 							if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-								util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "nova"), spec, fmt.Sprintf("Not all nova containers are up and running on host %s", host))
+								util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "nova"), spec, fmt.Sprintf("Not all nova containers are up and running in host %s, please execute <ssh -q %s.ctlplane sudo podman ps --format {{.ID}} --filter name=nova> on openstackclient pod (after oc login/oc project openstack/oc rsh openstackclient) to validate it", host, host))
 							}
-							status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("Not all nova containers are up and running on host %s", host))
+							status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("Not all nova containers are up and running in host %s", host))
 						}
 					} else {
-						if slices.Contains(status.FailedChecks, fmt.Sprintf("Not all nova containers are up and running on host %s", host)) {
+						if slices.Contains(status.FailedChecks, fmt.Sprintf("Not all nova containers are up and running in host %s", host)) {
 							if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-								util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "nova"), spec, fmt.Sprintf("Not all nova containers are up and running on host %s", host))
+								util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "nova"), spec, fmt.Sprintf("all nova containers are up and running in host %s", host))
 							}
 							clearNovaContainers = append(clearNovaContainers, host)
 						}
@@ -1426,7 +1431,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				for _, host := range clearNovaContainers {
 					{
 						for idx, item := range status.FailedChecks {
-							if strings.Contains(item, fmt.Sprintf("Not all nova containers are up and running on host %s", host)) {
+							if strings.Contains(item, fmt.Sprintf("Not all nova containers are up and running in host %s", host)) {
 								if len(status.FailedChecks) > 1 {
 									status.FailedChecks = append(status.FailedChecks[:idx], status.FailedChecks[idx+1:]...)
 								} else {
@@ -1442,7 +1447,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				log.Log.Error(err, "unable to retrieve jobs in openstack namespace")
 			}
 			if running {
-				return ctrl.Result{}, fmt.Errorf("there is an on-going/pending job in openstack, exiting")
+				return ctrl.Result{RequeueAfter: defaultHealthCheckInterval}, fmt.Errorf("there is an on-going/pending job in openstack, exiting")
 			}
 			// check dpdk bond status
 			log.Log.Info("Check DPDK bond status on each host")
@@ -1454,16 +1459,16 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 					bond3Req := returnCommand(r, fmt.Sprintf("ssh -q %s.ctlplane sudo ovs-appctl bond/show dpdkbond3", host))
 					err := util.CheckOvsBond(bond3Req, r.RESTConfig, util.HandleCNString(host))
 					if err != nil {
-						if !slices.Contains(status.FailedChecks, fmt.Sprintf("dpdkbond3 %s in %s", err, host)) {
+						if !slices.Contains(status.FailedChecks, fmt.Sprintf("dpdkbond3 is down in %s", host)) {
 							if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-								util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-bond3"), spec, fmt.Sprintf("dpdkbond3 %s in %s", err, host))
+								util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-bond3"), spec, fmt.Sprintf("dpdkbond3 is down in %s, please execute <ssh -q %s.ctlplane sudo ovs-appctl bond/show dpdkbond3> on openstackclient pod (after oc login/oc project openstack/oc rsh openstackclient) to validate it", host, host))
 							}
-							status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("dpdkbond3 %s in %s", err, host))
+							status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("dpdkbond3 is down in %s", host))
 						}
 					} else {
-						if slices.Contains(status.FailedChecks, fmt.Sprintf("dpdkbond3 %s in %s", err, host)) {
+						if slices.Contains(status.FailedChecks, fmt.Sprintf("dpdkbond3 is down in %s", host)) {
 							if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-								util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-bond3"), spec, fmt.Sprintf("dpdkbond3 %s in %s", err, host))
+								util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-bond3"), spec, fmt.Sprintf("dpdkbond3 is now up in %s", host))
 							}
 							clearDPDKbond3 = append(clearDPDKbond3, host)
 						}
@@ -1476,7 +1481,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				for _, host := range clearDPDKbond3 {
 					{
 						for idx, item := range status.FailedChecks {
-							if strings.Contains(item, fmt.Sprintf("dpdkbond3 %s in %s", host)) {
+							if strings.Contains(item, fmt.Sprintf("dpdkbond3 is down in %s", host)) {
 								if len(status.FailedChecks) > 1 {
 									status.FailedChecks = append(status.FailedChecks[:idx], status.FailedChecks[idx+1:]...)
 								} else {
@@ -1492,7 +1497,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				log.Log.Error(err, "unable to retrieve jobs in openstack namespace")
 			}
 			if running {
-				return ctrl.Result{}, fmt.Errorf("there is an on-going/pending job in openstack, exiting")
+				return ctrl.Result{RequeueAfter: defaultHealthCheckInterval}, fmt.Errorf("there is an on-going/pending job in openstack, exiting")
 			}
 			var clearDPDKbond4 []string
 			wg.Add(len(hosts))
@@ -1502,16 +1507,16 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 					bond4Req := returnCommand(r, fmt.Sprintf("ssh -q %s.ctlplane sudo ovs-appctl bond/show dpdkbond4", host))
 					err := util.CheckOvsBond(bond4Req, r.RESTConfig, util.HandleCNString(host))
 					if err != nil {
-						if !slices.Contains(status.FailedChecks, fmt.Sprintf("dpdkbond4 %s in %s", err, host)) {
+						if !slices.Contains(status.FailedChecks, fmt.Sprintf("dpdkbond4 is down in %s", host)) {
 							if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-								util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-bond4"), spec, fmt.Sprintf("dpdkbond4 %s in %s", err, host))
+								util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-bond4"), spec, fmt.Sprintf("dpdkbond4 is down in %s, please execute <ssh -q %s.ctlplane sudo ovs-appctl bond/show dpdkbond4> on openstackclient pod (after oc login/oc project openstack/oc rsh openstackclient) to validate", host, host))
 							}
-							status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("dpdkbond4 %s in %s", err, host))
+							status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("dpdkbond4 is down in %s", host))
 						}
 					} else {
-						if slices.Contains(status.FailedChecks, fmt.Sprintf("dpdkbond4 %s in %s", err, host)) {
+						if slices.Contains(status.FailedChecks, fmt.Sprintf("dpdkbond4 is down in %s", host)) {
 							if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-								util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-bond4"), spec, fmt.Sprintf("dpdkbond4 %s in %s", err, host))
+								util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-bond4"), spec, fmt.Sprintf("dpdkbond4 is now up in %s", host))
 							}
 							clearDPDKbond4 = append(clearDPDKbond4, host)
 						}
@@ -1524,7 +1529,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				for _, host := range clearDPDKbond4 {
 					{
 						for idx, item := range status.FailedChecks {
-							if strings.Contains(item, fmt.Sprintf("dpdkbond4 %s in %s", host)) {
+							if strings.Contains(item, fmt.Sprintf("dpdkbond4 is down in %s", host)) {
 								if len(status.FailedChecks) > 1 {
 									status.FailedChecks = append(status.FailedChecks[:idx], status.FailedChecks[idx+1:]...)
 								} else {
@@ -1540,7 +1545,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				log.Log.Error(err, "unable to retrieve jobs in openstack namespace")
 			}
 			if running {
-				return ctrl.Result{}, fmt.Errorf("there is an on-going/pending job in openstack, exiting")
+				return ctrl.Result{RequeueAfter: defaultHealthCheckInterval}, fmt.Errorf("there is an on-going/pending job in openstack, exiting")
 			}
 			// ovs service
 			log.Log.Info("Check OVS service on each host")
@@ -1554,14 +1559,14 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 					if err != nil {
 						if !slices.Contains(status.FailedChecks, fmt.Sprintf("ovs-service issue in %s", host)) {
 							if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-								util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-srv"), spec, fmt.Sprintf("ovs-service issue in %s", host))
+								util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-srv"), spec, fmt.Sprintf("ovs-service issue in %s, please execute <sh -q %s.ctlplane sudo systemctl status ovs-vswitchd.service> on openstackclient pod (after oc login/oc project openstack/oc rsh openstackclient) to validate it", host, host))
 							}
 							status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("ovs-service issue in %s", host))
 						}
 					} else {
 						if slices.Contains(status.FailedChecks, fmt.Sprintf("ovs-service issue in %s", host)) {
 							if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-								util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-srv"), spec, fmt.Sprintf("ovs-service issue in %s", host))
+								util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-srv"), spec, fmt.Sprintf("ovs-service is now recovered in %s", host))
 							}
 							clearOvsService = append(clearOvsService, host)
 						}
@@ -1590,7 +1595,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				log.Log.Error(err, "unable to retrieve jobs in openstack namespace")
 			}
 			if running {
-				return ctrl.Result{}, fmt.Errorf("there is an on-going/pending job in openstack, exiting")
+				return ctrl.Result{RequeueAfter: defaultHealthCheckInterval}, fmt.Errorf("there is an on-going/pending job in openstack, exiting")
 			}
 			// ovs logs for bug/warning/error
 			log.Log.Info("Check OVS logs for error and warning on each host")
@@ -1712,7 +1717,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				log.Log.Error(err, "unable to retrieve jobs in openstack namespace")
 			}
 			if running {
-				return ctrl.Result{}, fmt.Errorf("there is an on-going/pending job in openstack, exiting")
+				return ctrl.Result{RequeueAfter: defaultHealthCheckInterval}, fmt.Errorf("there is an on-going/pending job in openstack, exiting")
 			}
 			// ovs-vsctl show o/p
 			log.Log.Info("Check ovs-vsctl output")
@@ -1726,14 +1731,14 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 					if err != nil {
 						if !slices.Contains(status.FailedChecks, fmt.Sprintf("ovs-vsctl show error in %s", host)) {
 							if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-								util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-int"), spec, fmt.Sprintf("ovs-vsctl show error in %s", host))
+								util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-int"), spec, fmt.Sprintf("ovs-vsctl show error in %s, please execute <ssh -q %s.ctlplane sudo ovs-vsctl show> on openstackclient pod (after oc login/oc project openstack/oc rsh openstackclient) to validate", host, host))
 							}
 							status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("ovs-vsctl show error in %s", host))
 						}
 					} else {
 						if slices.Contains(status.FailedChecks, fmt.Sprintf("ovs-vsctl show error in %s", host)) {
 							if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-								util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-int"), spec, fmt.Sprintf("ovs-vsctl show error in %s", host))
+								util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "ovs-int"), spec, fmt.Sprintf("ovs-vsctl show error is now recovered in %s", host))
 							}
 							clearOvsVsctl = append(clearOvsVsctl, host)
 						}
@@ -1762,7 +1767,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				log.Log.Error(err, "unable to retrieve jobs in openstack namespace")
 			}
 			if running {
-				return ctrl.Result{}, fmt.Errorf("there is an on-going/pending job in openstack, exiting")
+				return ctrl.Result{RequeueAfter: defaultHealthCheckInterval}, fmt.Errorf("there is an on-going/pending job in openstack, exiting")
 			}
 			// time sync
 			log.Log.Info("Check time sync on each host")
@@ -1776,14 +1781,14 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 					if err != nil {
 						if !slices.Contains(status.FailedChecks, fmt.Sprintf("time sync error in %s", host)) {
 							if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-								util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "chronyd"), spec, fmt.Sprintf("time sync error in %s", host))
+								util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "chronyd"), spec, fmt.Sprintf("timesync error  in %s, please execute <ssh -q %s.ctlplane sudo timedatectl>", host, host))
 							}
 							status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("%s in %s", err, host))
 						}
 					} else {
 						if slices.Contains(status.FailedChecks, fmt.Sprintf("timesync error in %s", host)) {
 							if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-								util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "chronyd"), spec, fmt.Sprintf("timesync error  in %s", host))
+								util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "chronyd"), spec, fmt.Sprintf("timedate is now sync with NTP server in %s", host))
 							}
 							clearTimeNodes = append(clearTimeNodes, host)
 						}
@@ -1812,7 +1817,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				log.Log.Error(err, "unable to retrieve jobs in openstack namespace")
 			}
 			if running {
-				return ctrl.Result{}, fmt.Errorf("there is an on-going/pending job in openstack, exiting")
+				return ctrl.Result{RequeueAfter: defaultHealthCheckInterval}, fmt.Errorf("there is an on-going/pending job in openstack, exiting")
 			}
 			// nova logs
 			log.Log.Info("Check nova logs for errors/warning on each host")
@@ -1854,7 +1859,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 					}
 				}
 			}
-			var novas string
+			// var novas string
 			if len(novaaffectedNodes) > 0 {
 				wg.Add(len(hosts))
 				for _, host := range hosts {
@@ -1877,48 +1882,52 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 					}()
 				}
 				wg.Wait()
-				wg.Add(len(novaaffectedNodes))
-				for _, nhost := range novaaffectedNodes {
-					go func() {
-						defer wg.Done()
-						if _, err := os.Stat(fmt.Sprintf("/home/golanguser/.%s-%s.txt", nhost, "nova-log")); os.IsNotExist(err) {
-							_, err = os.Create(fmt.Sprintf("/home/golanguser/.%s-%s.txt", nhost, "nova-log"))
-							if err != nil {
-								log.Log.Error(err, fmt.Sprintf("unable to create nova error log file for host %s", nhost))
+				if len(novaaffectedNodes) > 0 {
+					wg.Add(len(novaaffectedNodes))
+					for _, nhost := range novaaffectedNodes {
+						go func() {
+							defer wg.Done()
+							if _, err := os.Stat(fmt.Sprintf("/home/golanguser/.%s-%s.txt", nhost, "nova-log")); os.IsNotExist(err) {
+								_, err = os.Create(fmt.Sprintf("/home/golanguser/.%s-%s.txt", nhost, "nova-log"))
+								if err != nil {
+									log.Log.Error(err, fmt.Sprintf("unable to create nova error log file for host %s", nhost))
+								}
 							}
-						}
-					}()
-				}
-				wg.Wait()
-				if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-					slices.Sort(novaaffectedNodes)
-					for _, host := range novaaffectedNodes {
-						if strings.Contains(host, "-") {
-							_, af, _ := strings.Cut(host, "-")
-							novas += af
-						}
+						}()
 					}
-					util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/.%s-%s.txt", novas, "novalog"), spec, fmt.Sprintf("observing errors/warnings in nova log file of hosts %v", novaaffectedNodes))
+					wg.Wait()
+				}
+				if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
+					// slices.Sort(novaaffectedNodes)
+					// var novas string
+					// for _, host := range novaaffectedNodes {
+					// 	if strings.Contains(host, "-") {
+					// 		_, af, _ := strings.Cut(host, "-")
+					// 		novas += af
+					// 	}
+					// }
+					util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/.%s-%s.txt", "novas", "novalog"), spec, "observing errors/warning in nova log file of osp hosts")
 				}
 			} else {
-				dir, err := os.Open("/home/golanguser/")
-				if err != nil {
-					log.Log.Error(err, "unable to open directory /home/golanguser")
-				}
-				files, err := os.ReadDir(dir.Name())
-				if err != nil {
-					log.Log.Error(err, "unable to read directory /home/golanguser")
-				}
-				var novafileName string
-				for _, f := range files {
-					if strings.Contains(f.Name(), "novalog") {
-						novafileName = f.Name()
-					}
-				}
+				// dir, err := os.Open("/home/golanguser/")
+				// if err != nil {
+				// 	log.Log.Error(err, "unable to open directory /home/golanguser")
+				// }
+				// files, err := os.ReadDir(dir.Name())
+				// if err != nil {
+				// 	log.Log.Error(err, "unable to read directory /home/golanguser")
+				// }
+				// var novafileName string
+				// for _, f := range files {
+				// 	if strings.Contains(f.Name(), "novalog") {
+				// 		novafileName = f.Name()
+				// 	}
+				// }
 				if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-					util.SendEmailRecoveredAlert(env, novafileName, spec, "No longer observing errors/warnings in nova log file of hosts")
+					util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/.%s-%s.txt", "novas", "novalog"), spec, "No longer observing errors/warnings in nova log file of hosts")
 				}
-				os.Remove(novafileName)
+				// os.Remove(novafileName)
+				os.Remove(fmt.Sprintf("/home/golanguser/.%s-%s.txt", "novas", "novalog"))
 				for idx, item := range status.FailedChecks {
 					if strings.Contains(item, "observing errors/warnings in log file of nova") {
 						if len(status.FailedChecks) > 1 {
@@ -1934,7 +1943,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				log.Log.Error(err, "unable to retrieve jobs in openstack namespace")
 			}
 			if running {
-				return ctrl.Result{}, fmt.Errorf("there is an on-going/pending job in openstack, exiting")
+				return ctrl.Result{RequeueAfter: defaultHealthCheckInterval}, fmt.Errorf("there is an on-going/pending job in openstack, exiting")
 			}
 			// check for stale resource allocations in nova logs of each host
 			log.Log.Info("Check nova logs for stale resources on each host")
@@ -2018,7 +2027,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 							novastale += af
 						}
 					}
-					util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/.%s-%s.txt", novastale, "novastale"), spec, fmt.Sprintf("found stale resource allocations in nova log file of hosts %v", novaaffectedNodes))
+					util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/.%s-%s.txt", novastale, "novastale"), spec, fmt.Sprintf("found stale resource allocations in nova log file of hosts %v, please execute sas get hosts <hostname> --usage on jump server and check listed servers exists in resource allocations", novaaffectedNodes))
 				}
 			} else {
 				dir, err := os.Open("/home/golanguser/")
@@ -2061,14 +2070,14 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 					if err != nil {
 						if !slices.Contains(status.FailedChecks, fmt.Sprintf("splunk service error in %s", host)) {
 							if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-								util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "splunk"), spec, fmt.Sprintf("splunk service error in %s", host))
+								util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "splunk"), spec, fmt.Sprintf("splunk service error in %s, please execute <ssh -q %s.ctlplane sudo systemctl status splunk.service> on openstackclient pod (after oc login/oc project openstack/oc rsh openstackclient) to validate it", host, host))
 							}
-							status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("splunk service error in %s", err, host))
+							status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("splunk service error in %s", host))
 						}
 					} else {
 						if slices.Contains(status.FailedChecks, fmt.Sprintf("splunk service error in %s", host)) {
 							if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-								util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "splunk"), spec, fmt.Sprintf("splunk service error in %s", host))
+								util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", host, "splunk"), spec, fmt.Sprintf("splunk service error is now resolved in %s", host))
 							}
 
 						}
@@ -2108,14 +2117,14 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 							if err != nil && errors.Is(err, fmt.Errorf("VM interface is down")) {
 								if !slices.Contains(status.FailedChecks, fmt.Sprintf("VM interface %s is down in host %s", inte, host)) {
 									if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-										util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", inte, "vminterface"), spec, fmt.Sprintf("VM interface %s is down in host %s", inte, host))
+										util.SendEmailAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", inte, "vminterface"), spec, fmt.Sprintf("VM interface %s is down in host %s, please execute <ssh -q %s.ctlplane sudo ovs-vsctl list interface %s> on openstackclient pod (after oc login/oc project openstack/oc rsh openstackclient) to validate", inte, host, host, inte))
 									}
 									status.FailedChecks = append(status.FailedChecks, fmt.Sprintf("VM interface %s is down in host %s", inte, host))
 								}
 							} else {
 								if slices.Contains(status.FailedChecks, fmt.Sprintf("VM interface %s is down in host %s", inte, host)) {
 									if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
-										util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", inte, "vminterface"), spec, fmt.Sprintf("VM interface %s is down in host %s", inte, host))
+										util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", inte, "vminterface"), spec, fmt.Sprintf("VM interface %s is now up in host %s", inte, host))
 									}
 								}
 								clearInterfaces = append(clearInterfaces, fmt.Sprintf("%s-%s", inte, host))
