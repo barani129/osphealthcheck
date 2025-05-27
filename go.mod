@@ -2,8 +2,6 @@ module github.com/barani129/osphealthcheck
 
 go 1.23.0
 
-toolchain go1.23.5
-
 require (
 	github.com/onsi/ginkgo/v2 v2.21.0
 	github.com/onsi/gomega v1.35.1
