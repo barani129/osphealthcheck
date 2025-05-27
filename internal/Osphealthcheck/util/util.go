@@ -233,7 +233,6 @@ func SubNotifyExternalSystem(data map[string]string, status string, commandToRun
 }
 
 func NotifyExternalSystem(data map[string]string, status string, commandToRun string, nodeName string, url string, username string, password string, filename string, clstatus *v1alpha1.OsphealthcheckStatus) error {
-
 	fig, _ := ReadFile(filename)
 	if fig != "" {
 		log.Printf("External system has already been notified for target %s . Exiting", url)
@@ -674,4 +673,8 @@ func CheckVMIPlacement(clientset *kubernetes.Clientset) ([]string, string, error
 		}
 	}
 	return nil, "", nil
+}
+
+func CheckOSIPSets(clientset *kubernetes.Clientset) {
+
 }

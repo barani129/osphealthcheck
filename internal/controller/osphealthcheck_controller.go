@@ -510,8 +510,10 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		var errHosts []string
 		if len(hostsErr) > 0 {
 			for _, host := range hostsErr {
-				newHost, _, _ := strings.Cut(host, ".")
-				errHosts = append(errHosts, newHost)
+				if strings.Contains(host, "dpdkcompute") {
+					newHost, _, _ := strings.Cut(host, ".")
+					errHosts = append(errHosts, newHost)
+				}
 			}
 			for _, nhost := range errHosts {
 				if !slices.Contains(status.FailedChecks, fmt.Sprintf("openstack compute service is down in node %s", nhost)) {
@@ -1122,8 +1124,8 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			if len(unsvcs) > 0 {
 				for _, svc := range svcs {
 					if svc != " " {
-						if slices.Contains(status.FailedChecks, fmt.Sprintf("volume service %s is down/disabled", svc)) {
-							idx := slices.Index(status.FailedChecks, fmt.Sprintf("volume service %s is down/disabled", svc))
+						if slices.Contains(status.FailedChecks, fmt.Sprintf("volume service %s is down", svc)) {
+							idx := slices.Index(status.FailedChecks, fmt.Sprintf("volume service %s is down", svc))
 							if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
 								util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", "cinder", svc), spec, fmt.Sprintf("volume service %s is up/enabled now", svc))
 							}
@@ -1255,9 +1257,15 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				}()
 			}
 			wg.Wait()
-			for idx, item := range status.FailedChecks {
+			var failedVms []string
+			for _, item := range status.FailedChecks {
 				if strings.Contains(item, "with non-running status") {
-					vms := strings.Split(item, " ")
+					failedVms = append(failedVms, item)
+				}
+			}
+			if len(failedVms) > 0 {
+				for _, avm := range failedVms {
+					vms := strings.Split(avm, " ")
 					workloadReq := returnCommand(r, fmt.Sprintf("openstack server list --all-projects --long -c Status --name %s -f value", vms[2]))
 					activev, err := util.ClearWorkloadVm(workloadReq, r.RESTConfig, util.HandleCNString(vms[8]))
 					if err != nil {
@@ -1267,6 +1275,7 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 						if spec.SuspendEmailAlert != nil && !*spec.SuspendEmailAlert {
 							util.SendEmailRecoveredAlert(env, fmt.Sprintf("/home/golanguser/%s-%s.txt", vms[2], vms[8]), spec, fmt.Sprintf("VM %s is now running with active status on host %s", vms[2], vms[8]))
 						}
+						idx := slices.Index(failedVms, avm)
 						status.FailedChecks = deleteElementSlice(status.FailedChecks, idx)
 						os.Remove(fmt.Sprintf("/home/golanguser/%s-%s.txt", vms[2], vms[8]))
 					}
@@ -1294,8 +1303,10 @@ func (r *OsphealthcheckReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			}
 			if len(hostsErr) > 0 {
 				for _, host := range hostsErr {
-					newHost, _, _ := strings.Cut(host, ".")
-					errHosts = append(errHosts, newHost)
+					if strings.Contains(host, "dpdkcompute") {
+						newHost, _, _ := strings.Cut(host, ".")
+						errHosts = append(errHosts, newHost)
+					}
 				}
 				for _, nhost := range errHosts {
 					if !slices.Contains(status.FailedChecks, fmt.Sprintf("openstack compute service is down in node %s", nhost)) {
