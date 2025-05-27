@@ -64,7 +64,7 @@ spec:
             properties:
               checkInterval:
                 description: the frequency of checks to be done, if not set, defaults
-                  to 2 minutes
+                  to 30 minutes
                 format: int64
                 type: integer
               email:
@@ -96,8 +96,6 @@ spec:
                 description: Suspends email alerts if set to true, target email (.spec.email)
                   will not be notified
                 type: boolean
-            required:
-            - suspend
             type: object
           status:
             description: OsphealthcheckStatus defines the observed state of Osphealthcheck

@@ -34,30 +34,39 @@ type OsphealthcheckSpec struct {
 	// Important: Run "make" to regenerate code after modifying this file
 
 	// Set suspend to true to disable monitoring the custom resource
+	// +optional
 	Suspend *bool `json:"suspend"`
 
 	// Suspends email alerts if set to true, target email (.spec.email) will not be notified
+	// +optional
 	SuspendEmailAlert *bool `json:"suspendEmailAlert,omitempty"`
 
 	// Target user's email for container status notification
+	// +optional
 	Email string `json:"email,omitempty"`
 
 	// SMTP Relay host for sending the email
+	// +optional
 	RelayHost string `json:"relayHost,omitempty"`
 
 	// To notify the external alerting system, boolean (true, false). Set true to notify the external system.
+	// +optional
 	NotifyExtenal *bool `json:"notifyExternal,omitempty"`
 
 	// URL of the external alert system
+	// +optional
 	ExternalURL string `json:"externalURL,omitempty"`
 
 	// Data to be sent to the external system in the form of config map
+	// +optional
 	ExternalData string `json:"externalData,omitempty"`
 
 	// Secret which has the username and password to post the alert notification to the external system
+	// +optional
 	ExternalSecret string `json:"externalSecret,omitempty"`
 
-	// the frequency of checks to be done, if not set, defaults to 2 minutes
+	// the frequency of checks to be done, if not set, defaults to 30 minutes
+	// +optional
 	CheckInterval *int64 `json:"checkInterval,omitempty"`
 }
 
